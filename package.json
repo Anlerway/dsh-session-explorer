@@ -7,6 +7,10 @@
     "node": "^22.15.0 || >=24.0.0"
   },
   "main": "./lib/index.js",
+  "scripts": {
+    "test": "node --test test/tree.test.mjs",
+    "selftest": "node test/selftest.mjs"
+  },
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
