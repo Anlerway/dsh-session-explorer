@@ -4,9 +4,12 @@ A resource-manager-style session browser for [DeepSeek Harness](https://github.c
 virtual folders, tags, notes, priority, trash and multi-workspace browsing on top of the
 native DSH session store — **without ever touching the physical layout of `~/.dsh`**.
 
-> Status: **P0 complete** — the plugin loads, the sidebar entry opens a panel, and the
-> sidecar data directory is created. The panes, the tree and the destructive operations
-> arrive with P1…P6 (see `实现粗规划.md` one directory up).
+> Status: **P0–P2 complete, P3 in progress** — the plugin loads, the sidebar entry opens a
+> three-pane explorer over the real session store, and the sidecar data directory is
+> created. Sessions can be renamed, archived, pinned and forked through DSH's own APIs;
+> folders, tags, notes, the shared tag library and the data-directory migration are live.
+> Trash, undo, detached windows and the browser component still arrive with P4…P6 (see
+> `实现粗规划.md` one directory up).
 
 ## Shape
 
@@ -42,16 +45,30 @@ Electron app, so `dsh profile` cannot rebuild it either. A **Client-side** chang
 
 All sidecar state lives in `~/.dsh-session-explorer/` — a **sibling** of `~/.dsh`, never a
 child of it, so uninstalling the plugin is `rm -rf` on one directory and nothing else.
-Override with `DSH_SE_DATA_DIR`; a path whose root is the filesystem root is rejected and
-falls back to the default.
 
 Layout created at boot:
 
 ```
 .dsh-session-explorer/
-  .tmp/      scratch space for atomic writes, emptied on every start
-  trash/     session artifacts moved here by "delete"
+  tree.v1.json         virtual folders, placements, workspace/session order
+  annotations.v1.json  per-session tags, note, priority, favorite/todo, tag library
+  settings.v1.json     shell/component preferences and the current data directory
+  .tmp/                scratch space for atomic writes, emptied on every start
+  trash/               session artifacts moved here by "delete"
 ```
+
+The location is resolved in three steps, in this order:
+
+1. `DSH_SE_DATA_DIR`, when set — a root path is rejected and falls back to the default.
+2. `dataDir.current` in the default location's `settings.v1.json`, which is what a migration
+   writes after it has copied everything.
+3. A `.location` pointer file (`{ "movedTo": "…" }`) left behind in a directory the user
+   moved away from, followed up to eight hops.
+
+Moving the directory is a seven-step transaction (inspect → copy → verify by byte count →
+reopen → record → leave a pointer → prune or remove the source). Every write route answers
+`409 migration-in-progress` while it runs, and a failure reopens the old directory and
+removes the half-copied target instead of touching the original.
 
 ## API
 
@@ -64,7 +81,40 @@ Everything answers with one of two envelopes:
 
 | Route | Purpose |
 |---|---|
-| `GET /session-explorer/api/bootstrap` | Plugin identity, schema version and a capability snapshot |
+| `GET /bootstrap` | Everything the panel needs in one round trip: workspaces, sessions, trashed, tree, tags, tag library, settings, revisions, stats |
+| `GET /sessions`, `GET /sessions/by-node` | Sessions, optionally filtered by `q`/`tag`/`flag`, or restricted to one tree node |
+| `GET /tree` | A freshly derived tree without re-reading session data |
+| `GET /tags`, `POST /tags`, `DELETE /tags/:tag` | The shared tag library |
+| `PATCH /annotations/:id` | Tags, note, priority, favorite, todo for one session |
+| `POST /folders`, `PATCH /folders/:id`, `DELETE /folders/:id` | Virtual folders (`?lift=0` deletes the contents too) |
+| `POST /nodes/:id/move`, `POST /nodes/:id/order` | Reparent or reorder a folder/workspace node |
+| `GET /settings`, `PUT /settings` | Preferences; `PUT` takes a partial document and drops unknown keys |
+| `POST /sessions/:id/rename` | DSH's own rename — appends a `session/title` event, no sidecar write |
+| `POST /workspaces/:id/rename` | Rename a workspace through the registry |
+| `POST /sessions/:id/archive`, `/unarchive`, `/pin`, `/unpin`, `/fork` | Native lifecycle operations |
+| `GET /datadir`, `POST /datadir/inspect`, `POST /datadir/migrate` | Describe, pre-flight and perform the data-directory move |
+
+Mutating routes accept an expected revision through `If-Match` or a `revision` field in the
+body; omitting both means last-writer-wins. A stale revision answers `409 revision-conflict`
+and the client reloads instead of clobbering.
+
+### Slots
+
+| Slot | What it renders |
+|---|---|
+| `sidebar.footer.action` | The explorer entry and its portal panel |
+| `settings.section` | The settings page: open mode, modal size/dim, component phase, data directory |
+
+Both labels are locale-bound thunks, so switching the app language re-renders them.
+
+## Tests
+
+```bash
+npm test   # node --test: tree, store, settings and data-directory suites
+```
+
+The suites run against temporary directories (`mkdtemp`) and hand-written `paths` objects,
+so they never touch `~/.dsh` or the real sidecars.
 
 ## Theming
 
