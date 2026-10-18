@@ -1,0 +1,13 @@
+# dsh-session-explorer bundle patch.
+#
+# Applied over the dsh-web-app layer. This bundle contributes ONE host row: the
+# plugin that serves /session-explorer/api over the DSH webserver. The browser
+# half is loaded through the `dsh.client` manifest in package.json.
+#
+# A patch replaces the targeted row's whole `config`, so only additive `insert`
+# rows appear here (no shipped row is ever overridden).
+
+- insert:
+    - id: session-explorer
+      name: 'dsh-session-explorer'
+      config: {}

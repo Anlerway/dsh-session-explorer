@@ -1,0 +1,53 @@
+{
+  "name": "dsh-session-explorer",
+  "version": "0.1.0",
+  "description": "Session explorer for DeepSeek Harness: virtual folders, tags, notes, priority, trash and multi-workspace session browsing on top of the native DSH session store.",
+  "type": "module",
+  "engines": {
+    "node": "^22.15.0 || >=24.0.0"
+  },
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "session",
+    "explorer"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Anlerway/dsh-session-explorer.git"
+  },
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0-rc <5"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  }
+}
