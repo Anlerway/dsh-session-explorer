@@ -8,7 +8,7 @@
   },
   "main": "./lib/index.js",
   "scripts": {
-    "test": "node --test test/tree.test.mjs",
+    "test": "node --test test/tree.test.mjs test/store.test.mjs",
     "selftest": "node test/selftest.mjs"
   },
   "exports": {

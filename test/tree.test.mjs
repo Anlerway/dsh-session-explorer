@@ -15,7 +15,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildAutoTree, sessionsOfNode, workspaceNodeId, workspaceIdOfNode } from "../lib/domain/tree.js";
+import {
+  ancestorsOf,
+  buildAutoTree,
+  canMove,
+  nearestWorkspace,
+  sessionsOfNode,
+  workspaceNodeId,
+  workspaceIdOfNode,
+} from "../lib/domain/tree.js";
 import { FIXED_NODES } from "../lib/constants.js";
 
 const registry = {
@@ -27,10 +35,10 @@ const registry = {
 };
 
 const sessions = [
-  { id: "s1", workspaceId: "wa", pinned: false },
-  { id: "s2", workspaceId: "wa", pinned: true },
-  { id: "s3", workspaceId: "wb", pinned: false },
-  { id: "s4", workspaceId: null, pinned: false },
+  { id: "s1", workspaceId: "wa", pinned: false, favorite: false, todo: false },
+  { id: "s2", workspaceId: "wa", pinned: true, favorite: true, todo: false },
+  { id: "s3", workspaceId: "wb", pinned: false, favorite: false, todo: true },
+  { id: "s4", workspaceId: null, pinned: false, favorite: false, todo: false },
 ];
 
 test("node ids round-trip", () => {
@@ -68,7 +76,9 @@ test("the default workspace is a real node inside the root", () => {
 
 test("R2+R3: every session is counted exactly once and counts sum to the total", () => {
   const tree = buildAutoTree({ registry, sessions });
-  const containers = tree.children[FIXED_NODES.root].filter((id) => id !== FIXED_NODES.favorites);
+  // 收藏 / 待办 are shortcut views, so they are not part of the container sum.
+  const shortcuts = new Set([FIXED_NODES.favorites, FIXED_NODES.todos]);
+  const containers = tree.children[FIXED_NODES.root].filter((id) => !shortcuts.has(id));
   const sum = containers.reduce((total, id) => total + (tree.counts[id] ?? 0), 0);
   assert.equal(sum, sessions.length);
   assert.equal(tree.counts[workspaceNodeId("wa")], 2);
@@ -76,10 +86,16 @@ test("R2+R3: every session is counted exactly once and counts sum to the total",
   assert.equal(tree.counts[FIXED_NODES.ungrouped], 1);
 });
 
-test("R4: favorites mirrors the pinned set and is not part of the container sum", () => {
+test("R4: favorites and todos mirror the plugin flags and are not part of the container sum", () => {
   const tree = buildAutoTree({ registry, sessions });
   assert.equal(tree.counts[FIXED_NODES.favorites], 1);
+  assert.equal(tree.counts[FIXED_NODES.todos], 1);
   assert.deepEqual(sessionsOfNode(FIXED_NODES.favorites, { sessions }, tree).map((s) => s.id), ["s2"]);
+  assert.deepEqual(sessionsOfNode(FIXED_NODES.todos, { sessions }, tree).map((s) => s.id), ["s3"]);
+  // A pin alone is 置顶, not 收藏: s2 is both here, so assert the independence.
+  const pinOnly = [{ id: "p1", workspaceId: "wa", pinned: true, favorite: false, todo: false }];
+  const tree2 = buildAutoTree({ registry, sessions: pinOnly });
+  assert.equal(tree2.counts[FIXED_NODES.favorites], 0);
 });
 
 test("scope follows the selection", () => {
@@ -109,4 +125,131 @@ test("an empty registry still yields a navigable tree", () => {
   assert.deepEqual(tree.roots, [FIXED_NODES.root, FIXED_NODES.trash]);
   assert.equal(tree.counts[FIXED_NODES.root], 0);
   assert.ok(tree.children[FIXED_NODES.root].includes(FIXED_NODES.ungrouped));
+});
+
+// ── user folders (P2) ────────────────────────────────────────────────────────
+
+test("a user folder holds a workspace and aggregates its sessions", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: {
+      folders: { "d-work": { id: "d-work", name: "工作", parent: FIXED_NODES.root, order: 0 } },
+      placement: { wa: "d-work" },
+    },
+  });
+  assert.equal(tree.nodes["d-work"].parent, FIXED_NODES.root);
+  assert.equal(tree.nodes[workspaceNodeId("wa")].parent, "d-work");
+  // The workspace keeps its own count; the folder aggregates it.
+  assert.equal(tree.counts[workspaceNodeId("wa")], 2);
+  assert.equal(tree.counts["d-work"], 2);
+  // …and the total is unchanged: a folder is a container, not a new session.
+  assert.equal(tree.counts[FIXED_NODES.root], sessions.length);
+});
+
+test("nested folders aggregate from the deepest child upward", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: {
+      folders: {
+        "d-a": { id: "d-a", name: "A", parent: FIXED_NODES.root, order: 0 },
+        "d-b": { id: "d-b", name: "B", parent: "d-a", order: 0 },
+      },
+      placement: { wa: "d-b", wb: "d-a" },
+    },
+  });
+  assert.equal(tree.counts["d-b"], 2);
+  assert.equal(tree.counts["d-a"], 3);
+  assert.equal(tree.nodes[workspaceNodeId("wa")].parent, "d-b");
+});
+
+test("R1: a placement that would nest a workspace in a workspace is ignored", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: { folders: {}, placement: { wa: workspaceNodeId("wb") } },
+  });
+  assert.equal(tree.nodes[workspaceNodeId("wa")].parent, FIXED_NODES.root);
+});
+
+test("R5: a folder whose parent vanished degrades to the root", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: { folders: { "d-lost": { id: "d-lost", name: "孤儿", parent: "d-gone" } } },
+  });
+  assert.equal(tree.nodes["d-lost"].parent, FIXED_NODES.root);
+});
+
+test("R5: a parent cycle is cut at the root instead of looping forever", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: {
+      folders: {
+        "d-x": { id: "d-x", name: "X", parent: "d-y" },
+        "d-y": { id: "d-y", name: "Y", parent: "d-x" },
+      },
+    },
+  });
+  // Neither folder can keep the other as parent without a cycle, so both land
+  // on the root and the tree stays finite and walkable.
+  assert.equal(tree.nodes["d-x"].parent, FIXED_NODES.root);
+  assert.equal(tree.nodes["d-y"].parent, FIXED_NODES.root);
+  assert.deepEqual(ancestorsOf("d-x", tree), [FIXED_NODES.root, "d-x"]);
+});
+
+test("canMove enforces the tree rules", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: {
+      folders: {
+        "d-a": { id: "d-a", name: "A", parent: FIXED_NODES.root, order: 0 },
+        "d-b": { id: "d-b", name: "B", parent: "d-a", order: 0 },
+      },
+    },
+  });
+  // A folder may move inside another folder…
+  assert.equal(canMove("d-b", FIXED_NODES.root, tree).ok, true);
+  // …but not into its own descendant, and not into a workspace.
+  assert.equal(canMove("d-a", "d-b", tree).ok, false);
+  assert.equal(canMove("d-a", workspaceNodeId("wa"), tree).ok, false);
+  // A workspace may live in a folder, never in another workspace.
+  assert.equal(canMove(workspaceNodeId("wa"), "d-a", tree).ok, true);
+  assert.equal(canMove(workspaceNodeId("wa"), workspaceNodeId("wb"), tree).ok, false);
+  // Fixed nodes are immovable, and unknown ids are rejected.
+  assert.equal(canMove(FIXED_NODES.trash, FIXED_NODES.root, tree).ok, false);
+  assert.equal(canMove("d-nope", FIXED_NODES.root, tree).ok, false);
+});
+
+test("ancestorsOf and nearestWorkspace follow the chain", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: {
+      folders: { "d-a": { id: "d-a", name: "A", parent: FIXED_NODES.root, order: 0 } },
+      placement: { wa: "d-a" },
+    },
+  });
+  assert.deepEqual(ancestorsOf(workspaceNodeId("wa"), tree), [FIXED_NODES.root, "d-a", workspaceNodeId("wa")]);
+  assert.equal(nearestWorkspace(workspaceNodeId("wa"), tree), "wa");
+  assert.equal(nearestWorkspace("d-a", tree), null);
+});
+
+test("trashed sessions leave the root and appear only in the trash", () => {
+  const tree = buildAutoTree({ registry, sessions, trashedIds: ["s1"] });
+  const view = { sessions };
+  const trashed = new Set(["s1"]);
+  assert.equal(tree.counts[FIXED_NODES.root], sessions.length - 1);
+  assert.equal(tree.counts[FIXED_NODES.trash], 1);
+  assert.deepEqual(
+    sessionsOfNode(FIXED_NODES.root, view, tree, { trashedIds: trashed }).map((s) => s.id),
+    ["s2", "s3", "s4"],
+  );
+  assert.deepEqual(
+    sessionsOfNode(FIXED_NODES.trash, view, tree, { trashedIds: trashed }).map((s) => s.id),
+    ["s1"],
+  );
 });
