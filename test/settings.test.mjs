@@ -11,7 +11,9 @@ import assert from "node:assert/strict";
 
 import {
   MAX_DIM,
-  MODAL_SIZES,
+  MODAL_FIXED_SIZES,
+  MODAL_PERCENT_SIZES,
+  MODAL_SIZING,
   OPEN_MODES,
   defaultSettings,
   mergeSettings,
@@ -19,10 +21,12 @@ import {
   normalizeSettings,
 } from "../lib/domain/settings.js";
 
-test("defaults keep the panel plain: modal, medium, no scrim", () => {
+test("defaults keep the panel plain: modal, fixed medium, no scrim", () => {
   const settings = defaultSettings();
   assert.equal(settings.shell.openMode, "modal");
+  assert.equal(settings.shell.modal.sizing, "fixed");
   assert.equal(settings.shell.modal.size, "md");
+  assert.equal(settings.shell.modal.percent, "p70");
   // Hard constraint 10: a wallpaper must never be darkened by default.
   assert.equal(settings.shell.modal.dim, 0);
   assert.equal(settings.shell.modal.closeOnBackdrop, true);
@@ -38,16 +42,34 @@ test("normalizeSettings always returns a complete document", () => {
   assert.deepEqual(normalizeSettings("nonsense"), defaultSettings());
 });
 
-test("open modes and modal sizes are closed vocabularies", () => {
+test("open modes, sizing modes and presets are closed vocabularies", () => {
   for (const mode of OPEN_MODES) {
     assert.equal(normalizeSettings({ shell: { openMode: mode } }).shell.openMode, mode);
   }
   assert.equal(normalizeSettings({ shell: { openMode: "detached-window" } }).shell.openMode, "modal");
 
-  for (const size of MODAL_SIZES) {
+  for (const sizing of MODAL_SIZING) {
+    assert.equal(normalizeSettings({ shell: { modal: { sizing } } }).shell.modal.sizing, sizing);
+  }
+  assert.equal(normalizeSettings({ shell: { modal: { sizing: "auto" } } }).shell.modal.sizing, "fixed");
+
+  for (const size of MODAL_FIXED_SIZES) {
     assert.equal(normalizeSettings({ shell: { modal: { size } } }).shell.modal.size, size);
   }
   assert.equal(normalizeSettings({ shell: { modal: { size: "huge" } } }).shell.modal.size, "md");
+
+  for (const percent of MODAL_PERCENT_SIZES) {
+    assert.equal(normalizeSettings({ shell: { modal: { percent } } }).shell.modal.percent, percent);
+  }
+  assert.equal(normalizeSettings({ shell: { modal: { percent: "p12" } } }).shell.modal.percent, "p70");
+});
+
+test("a settings file from the old size vocabulary still yields a usable size", () => {
+  // The previous build wrote size "full"; that used to mean "a share of the
+  // viewport", so it must land in the percent branch rather than be discarded.
+  const migrated = normalizeSettings({ shell: { modal: { size: "full" } } });
+  assert.equal(migrated.shell.modal.sizing, "percent");
+  assert.equal(migrated.shell.modal.percent, "p100");
 });
 
 test("the scrim is clamped to [0, MAX_DIM]", () => {
@@ -94,10 +116,23 @@ test("mergeSettings does not mutate the document it was given", () => {
   assert.equal(JSON.stringify(base), before);
 });
 
-test("modal presets map to the documented sizes", () => {
-  assert.deepEqual(modalSizeOf("sm"), { width: "900px", height: "600px" });
-  assert.deepEqual(modalSizeOf("md"), { width: "1100px", height: "720px" });
-  assert.deepEqual(modalSizeOf("lg"), { width: "1280px", height: "800px" });
-  assert.deepEqual(modalSizeOf("full"), { width: "96%", height: "92%" });
-  assert.deepEqual(modalSizeOf("unknown"), modalSizeOf("md"));
+test("a fixed preset is clamped to the viewport", () => {
+  assert.deepEqual(modalSizeOf({ sizing: "fixed", size: "sm" }), {
+    width: "min(860px, 94vw)",
+    height: "min(560px, 90vh)",
+  });
+  assert.deepEqual(modalSizeOf({ sizing: "fixed", size: "md" }), {
+    width: "min(1100px, 94vw)",
+    height: "min(720px, 90vh)",
+  });
+  // An unknown preset falls back rather than producing an empty box.
+  assert.deepEqual(modalSizeOf({ sizing: "fixed", size: "huge" }), modalSizeOf({ sizing: "fixed" }));
+  assert.deepEqual(modalSizeOf(null), modalSizeOf({ sizing: "fixed" }));
+});
+
+test("a percentage preset follows the viewport", () => {
+  assert.deepEqual(modalSizeOf({ sizing: "percent", percent: "p50" }), { width: "50vw", height: "50vh" });
+  assert.deepEqual(modalSizeOf({ sizing: "percent", percent: "p85" }), { width: "85vw", height: "85vh" });
+  assert.deepEqual(modalSizeOf({ sizing: "percent", percent: "p100" }), { width: "100vw", height: "100vh" });
+  assert.deepEqual(modalSizeOf({ sizing: "percent" }), { width: "70vw", height: "70vh" });
 });

@@ -53,6 +53,20 @@ globalThis.fetch = async () => ({ json: async () => ({ ok: true, result: {} }), 
 let mod = null;
 const requireShim = (name) => {
   if (name === "react") return React;
+  // The primitives are optional in production too (the plugin degrades to its
+  // own dialogs). The harness provides a stub so the *native* branch is the one
+  // exercised here; a second, separate run covers the fallback.
+  if (name === "@deepseek-ai/dsh-client-ui-primitives") {
+    if (process.env.SE_SMOKE_NO_PRIMITIVES === "1") throw new Error("not provided");
+    // The stubs must forward children: a component receives them as the third
+    // argument of createElement, not only in props. Dropping them would hide
+    // the whole panel — exactly what the presenter assertion is meant to catch.
+    return {
+      Modal: (props, ...children) => React.createElement("div", { "data-modal": true }, ...children),
+      RiskConfirmation: (props, ...children) => React.createElement("div", { "data-risk": true }, ...children),
+      Button: (props, ...children) => React.createElement("button", props, ...children),
+    };
+  }
   throw new Error("unexpected require: " + name);
 };
 
@@ -63,7 +77,7 @@ const source = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8"
   .replace(
     "    exports.apply = apply;",
     [
-      "    exports.__test = { Trow, SessionRow, WorkspaceRow, TreePane, ListPane, DetailPane, FilterDialog, CommandMenu };",
+      "    exports.__test = { Trow, SessionRow, WorkspaceRow, TreePane, ListPane, DetailPane, FilterDialog, CommandMenu, DialogHost, frameSizeOf };",
       "    exports.apply = apply;",
     ].join("\n"),
   );
@@ -78,8 +92,14 @@ function render(element) {
   if (element === null || element === undefined || element === false || element === true) return null;
   if (Array.isArray(element)) return element.map(render);
   if (typeof element !== "object") return element;
-  if (typeof element.type === "function") return render(element.type(element.props));
-  return { type: element.type, children: (element.children ?? []).flatMap(render) };
+  // Children are passed as trailing arguments, exactly as React does: a
+  // component that destructures `props` alone still receives its nested
+  // elements through createElement's rest parameter.
+  if (typeof element.type === "function") return render(element.type(element.props, ...(element.children ?? [])));
+  // Host elements keep their props: the presenter assertion below reads
+  // data-modal / data-hosted off them, and dropping props would make every
+  // assertion vacuously pass.
+  return { type: element.type, props: element.props, children: (element.children ?? []).flatMap(render) };
 }
 
 const registered = [];
@@ -100,7 +120,52 @@ console.log("footer render ok:", Boolean(render({ type: footer.component, props:
 // Open the panel and render it. Every identifier the shell body touches is read
 // on this path, so a missing binding fails loudly.
 mod.panelStore.set(true);
-console.log("panel render ok:", Boolean(render({ type: footer.component, props: { wide: true, t: (k) => k } })));
+const panelTree = render({ type: footer.component, props: { wide: true, t: (k) => k } });
+console.log("panel render ok:", Boolean(panelTree));
+
+/**
+ * Which presenter owns the panel?
+ *
+ * modal mode must be hosted by DSH's Modal when the primitives exist (the mask,
+ * focus trap and stacking are the whole point), and must fall back to the local
+ * shell otherwise. Window mode always keeps the local chrome, because that is
+ * the plugin's own draggable window.
+ */
+function findTag(element, tag) {
+  if (!element || typeof element !== "object") return null;
+  if (Array.isArray(element)) {
+    for (const child of element) {
+      const hit = findTag(child, tag);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  // A prop may be false-y (data-hosted="local" is a string, but a boolean
+  // attribute would be true), so presence is checked with `in`.
+  if (element.props && tag in element.props) return element;
+  for (const child of element.children ?? []) {
+    const hit = findTag(child, tag);
+    if (hit) return hit;
+  }
+  return null;
+}
+const hostedNative = findTag(panelTree, "data-modal");
+const localShell = findTag(panelTree, "data-hosted") ?? findTag(panelTree, "data-sizing");
+const primitivesAvailable = process.env.SE_SMOKE_NO_PRIMITIVES !== "1";
+const shellHost = localShell?.props?.["data-hosted"] ?? null;
+console.log(
+  "panel presenter:",
+  hostedNative ? "native-modal" : "local",
+  "| data-hosted =",
+  shellHost,
+);
+if (primitivesAvailable) {
+  if (!hostedNative) throw new Error("modal mode should be hosted by DSH's Modal");
+  if (shellHost !== "native") throw new Error("shell must declare data-hosted=native");
+} else {
+  if (hostedNative) throw new Error("without primitives the panel must not claim a native modal");
+  if (shellHost !== "local") throw new Error("shell must declare data-hosted=local");
+}
 
 const settings = registered.find(([name]) => name === "settings.section")[1];
 console.log("settings render ok:", Boolean(render({ type: settings.component, props: {} })));
@@ -214,3 +279,76 @@ console.log("CommandMenu ok:", Boolean(render({
     onClose: noop,
   },
 })));
+
+// ── dialogs ─────────────────────────────────────────────────────────────────
+// The dialog components are private; expose them the same way as the rows so
+// each presenter can be rendered directly. This is where the "native dialog"
+// requirement is actually pinned down: a confirm rendered with primitives must
+// go through Modal/RiskConfirmation, not through our own markup.
+const { DialogHost, frameSizeOf } = mod.__test;
+const dialogsHosted = (dialog) =>
+  render({ type: DialogHost, props: { dialog, promptRef: { current: null }, onSettle: noop } });
+
+const plainConfirm = dialogsHosted({
+  kind: "confirm",
+  title: "删除文件夹",
+  message: "内容会移动到上一级。",
+  confirmLabel: "删除",
+  cancelLabel: "取消",
+  danger: true,
+  resolve: noop,
+});
+const riskConfirm = dialogsHosted({
+  kind: "confirm",
+  title: "永久删除",
+  message: "不可撤销。",
+  confirmLabel: "永久删除",
+  cancelLabel: "取消",
+  danger: true,
+  acknowledge: "我明白此操作不可撤销",
+  resolve: noop,
+});
+const promptDialog = dialogsHosted({
+  kind: "prompt",
+  title: "新建文件夹",
+  message: "",
+  placeholder: "新建文件夹",
+  value: "新建文件夹",
+  confirmLabel: "创建",
+  cancelLabel: "取消",
+  maxLength: 64,
+  validate: null,
+  resolve: noop,
+});
+console.log("DialogHost confirm ok:", Boolean(plainConfirm));
+console.log("DialogHost risk ok:", Boolean(riskConfirm));
+console.log("DialogHost prompt ok:", Boolean(promptDialog));
+if (primitivesAvailable) {
+  if (!findTag(plainConfirm, "data-modal")) throw new Error("a confirm must be hosted by DSH's Modal");
+  if (!findTag(riskConfirm, "data-risk")) throw new Error("a destructive confirm must use RiskConfirmation");
+  if (!findTag(promptDialog, "data-modal")) throw new Error("a prompt must be hosted by DSH's Modal");
+  console.log("dialogs presenter: native");
+} else {
+  if (findTag(plainConfirm, "data-modal")) throw new Error("without primitives there is no native modal");
+  console.log("dialogs presenter: local");
+}
+
+// ── sizing ──────────────────────────────────────────────────────────────────
+// The host has modalSizeOf; the bundle cannot import it, so the two are pinned
+// to the same answers here. A drift would make the native Modal frame and the
+// local shell disagree about what "中" means.
+const cases = [
+  [{ sizing: "fixed", size: "sm" }, { width: "min(860px, 94vw)", height: "min(560px, 90vh)" }],
+  [{ sizing: "fixed", size: "md" }, { width: "min(1100px, 94vw)", height: "min(720px, 90vh)" }],
+  [{ sizing: "fixed", size: "lg" }, { width: "min(1320px, 94vw)", height: "min(820px, 90vh)" }],
+  [{ sizing: "fixed", size: "xl" }, { width: "min(1600px, 94vw)", height: "min(960px, 90vh)" }],
+  [{ sizing: "percent", percent: "p50" }, { width: "50vw", height: "50vh" }],
+  [{ sizing: "percent", percent: "p100" }, { width: "100vw", height: "100vh" }],
+];
+for (const [input, expected] of cases) {
+  const actual = frameSizeOf(input);
+  if (actual.width !== expected.width || actual.height !== expected.height) {
+    throw new Error("frameSizeOf(" + JSON.stringify(input) + ") = " + JSON.stringify(actual) + ", expected " + JSON.stringify(expected));
+  }
+}
+console.log("sizing presets ok:", cases.length);

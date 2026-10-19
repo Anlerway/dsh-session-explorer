@@ -4,13 +4,18 @@ A resource-manager-style session browser for [DeepSeek Harness](https://github.c
 virtual folders, tags, notes, priority, trash and multi-workspace browsing on top of the
 native DSH session store — **without ever touching the physical layout of `~/.dsh`**.
 
-> Status: **P0–P4 complete** — the plugin loads, the sidebar entry opens a three-pane
-> explorer over the real session store, and the sidecar data directory is created.
-> Sessions can be renamed (inline, in the tree, the list and the detail pane), archived,
-> pinned, forked, moved, tagged, noted, filtered and trashed; deleting moves the session
-> payload into a real bin under the data directory, from which it can be restored or
-> purged, and every destructive step can be undone with Ctrl+Z. Detached windows and the
-> browser component still arrive with P5/P6 (see `实现粗规划.md` one directory up).
+> Status: **P0–P4 complete, P4.1 polish in** — the plugin loads, the sidebar entry opens a
+> three-pane explorer over the real session store, and the sidecar data directory is
+> created. Sessions can be renamed (from the toolbar, F2, the row context menu or the
+> detail title), archived, pinned, forked, moved, tagged, noted, filtered and trashed;
+> deleting moves the payload into a real bin under the data directory, from which it can
+> be restored or purged, and every destructive step can be undone with Ctrl+Z.
+>
+> The panel is presented by DSH's own `Modal` (with `RiskConfirmation` for operations
+> that cannot be undone) and every confirmation or prompt is a DSH dialog — no
+> `window.confirm`, no `window.prompt` (which Electron disables outright). Size can be a
+> fixed pixel preset or a percentage of the viewport. Detached windows and the browser
+> component still arrive with P5/P6 (see `实现粗规划.md` one directory up).
 
 ## Shape
 
@@ -112,12 +117,19 @@ Both labels are locale-bound thunks, so switching the app language re-renders th
 ## Tests
 
 ```bash
-npm test   # node --test: tree, store, settings, data-directory and trash suites
-npm run smoke  # render every client component once against a stub React
+npm test        # node --test: tree, store, settings, data-directory, trash and session suites
+npm run smoke   # render every client component against a stub React, twice
 ```
 
 The suites run against temporary directories (`mkdtemp`) and hand-written `paths` objects,
 so they never touch `~/.dsh` or the real sidecars.
+
+`npm run smoke` loads the real client bundle and renders every component once. It runs
+twice: once with `@deepseek-ai/dsh-client-ui-primitives` available and once without, which
+is what pins down the two presentations the plugin must support — DSH's own `Modal` /
+`RiskConfirmation` when the host exposes them, and the local dialogs when it does not. It
+also asserts that the client's sizing helper agrees with `modalSizeOf` on the host, since
+the bundle cannot import a host module.
 
 ## Theming
 

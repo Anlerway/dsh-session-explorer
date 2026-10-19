@@ -8,8 +8,8 @@
   },
   "main": "./lib/index.js",
   "scripts": {
-    "test": "node --test test/tree.test.mjs test/store.test.mjs test/settings.test.mjs test/datadir.test.mjs test/trash.test.mjs",
-    "smoke": "node test/render-smoke.mjs",
+    "test": "node --test test/tree.test.mjs test/store.test.mjs test/settings.test.mjs test/datadir.test.mjs test/trash.test.mjs test/sessions.test.mjs",
+    "smoke": "node test/render-smoke.mjs && SE_SMOKE_NO_PRIMITIVES=1 node test/render-smoke.mjs",
     "selftest": "node test/selftest.mjs"
   },
   "exports": {
