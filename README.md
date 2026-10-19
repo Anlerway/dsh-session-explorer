@@ -1,4 +1,4 @@
-# dsh-session-explorer
+# dsh-session-explorer (会话资源管理器)
 
 A resource-manager-style session browser for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness):
 virtual folders, tags, notes, priority, trash and multi-workspace browsing on top of the
@@ -10,12 +10,19 @@ native DSH session store — **without ever touching the physical layout of `~/.
 > detail title), archived, pinned, forked, moved, tagged, noted, filtered and trashed;
 > deleting moves the payload into a real bin under the data directory, from which it can
 > be restored or purged, and every destructive step can be undone with Ctrl+Z.
+> Workspaces and folders are listed beside sessions, can be renamed the same three ways
+> and are reachable through the search box.
 >
-> The panel is presented by DSH's own `Modal` (with `RiskConfirmation` for operations
-> that cannot be undone) and every confirmation or prompt is a DSH dialog — no
-> `window.confirm`, no `window.prompt` (which Electron disables outright). Size can be a
-> fixed pixel preset or a percentage of the viewport. Detached windows and the browser
-> component still arrive with P5/P6 (see `实现粗规划.md` one directory up).
+> The panel surface has two presenters: the plugin's own floating card (the default — a
+> file manager is a window, not a dialog) and, opt-in, DSH's `Modal` used headless so the
+> app owns the mask, focus trap and Escape. Every confirmation and prompt is a DSH dialog
+> regardless — no `window.confirm`, no `window.prompt` (which Electron disables outright),
+> with `RiskConfirmation` for operations that cannot be undone. Size can be a fixed pixel
+> preset or a percentage of the viewport.
+>
+> The standalone Electron component is gone: it duplicated a runtime (it could borrow
+> `dsh-orb`'s, or download its own) for a separate window that never shipped. This is a
+> pure web plugin with no runtime preference to configure.
 
 ## Shape
 
@@ -58,7 +65,7 @@ Layout created at boot:
 .dsh-session-explorer/
   tree.v1.json         virtual folders, placements, workspace/session order
   annotations.v1.json  per-session tags, note, priority, favorite/todo, tag library
-  settings.v1.json     shell/component preferences and the current data directory
+  settings.v1.json     shell preferences (open mode, presenter, size) and the current data directory
   .tmp/                scratch space for atomic writes, emptied on every start
   trash/               the bin: index.v1.json + one payload directory per session
 ```
@@ -110,7 +117,7 @@ and the client reloads instead of clobbering.
 | Slot | What it renders |
 |---|---|
 | `sidebar.footer.action` | The explorer entry and its portal panel |
-| `settings.section` | The settings page: open mode, modal size/dim, component phase, data directory |
+| `settings.section` | The settings page: open mode, panel presenter, size/dim, data directory |
 
 Both labels are locale-bound thunks, so switching the app language re-renders them.
 
@@ -130,6 +137,12 @@ is what pins down the two presentations the plugin must support — DSH's own `M
 `RiskConfirmation` when the host exposes them, and the local dialogs when it does not. It
 also asserts that the client's sizing helper agrees with `modalSizeOf` on the host, since
 the bundle cannot import a host module.
+
+Three UI regressions are pinned in the same harness because they were invisible to the
+host tests: a folder under the current scope must appear in the *list* (not only in the
+tree) and must be findable by name from the search box; a workspace must describe itself
+as 工作区 in the detail pane and never as 文件夹; and `presenterOf` must return the floating
+card by default, the native modal only when asked for *and* available.
 
 ## Theming
 

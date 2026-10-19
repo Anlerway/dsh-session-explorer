@@ -13,6 +13,7 @@ import {
   MAX_DIM,
   MODAL_FIXED_SIZES,
   MODAL_PERCENT_SIZES,
+  MODAL_PRESENTATIONS,
   MODAL_SIZING,
   OPEN_MODES,
   defaultSettings,
@@ -24,6 +25,7 @@ import {
 test("defaults keep the panel plain: modal, fixed medium, no scrim", () => {
   const settings = defaultSettings();
   assert.equal(settings.shell.openMode, "modal");
+  assert.equal(settings.shell.modal.presentation, "float");
   assert.equal(settings.shell.modal.sizing, "fixed");
   assert.equal(settings.shell.modal.size, "md");
   assert.equal(settings.shell.modal.percent, "p70");
@@ -31,7 +33,9 @@ test("defaults keep the panel plain: modal, fixed medium, no scrim", () => {
   assert.equal(settings.shell.modal.dim, 0);
   assert.equal(settings.shell.modal.closeOnBackdrop, true);
   assert.equal(settings.shell.window.alwaysOnTop, false);
-  assert.equal(settings.component.reuseOrbRuntime, true);
+  // The Electron component (and its "reuse dsh-orb's runtime" flag) is gone:
+  // the plugin is a pure web plugin now and stores no runtime preference.
+  assert.equal("component" in settings, false);
   assert.equal(settings.dataDir.current, null);
 });
 
@@ -47,11 +51,19 @@ test("open modes, sizing modes and presets are closed vocabularies", () => {
     assert.equal(normalizeSettings({ shell: { openMode: mode } }).shell.openMode, mode);
   }
   assert.equal(normalizeSettings({ shell: { openMode: "detached-window" } }).shell.openMode, "modal");
+  // The abandoned separate-window mode degrades to the in-app modal instead of
+  // leaving a stored setting the UI can no longer open.
+  assert.equal(normalizeSettings({ shell: { openMode: "detached" } }).shell.openMode, "modal");
 
   for (const sizing of MODAL_SIZING) {
     assert.equal(normalizeSettings({ shell: { modal: { sizing } } }).shell.modal.sizing, sizing);
   }
   assert.equal(normalizeSettings({ shell: { modal: { sizing: "auto" } } }).shell.modal.sizing, "fixed");
+
+  for (const presentation of MODAL_PRESENTATIONS) {
+    assert.equal(normalizeSettings({ shell: { modal: { presentation } } }).shell.modal.presentation, presentation);
+  }
+  assert.equal(normalizeSettings({ shell: { modal: { presentation: "dialog" } } }).shell.modal.presentation, "float");
 
   for (const size of MODAL_FIXED_SIZES) {
     assert.equal(normalizeSettings({ shell: { modal: { size } } }).shell.modal.size, size);

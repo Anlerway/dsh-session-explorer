@@ -77,7 +77,7 @@ const source = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8"
   .replace(
     "    exports.apply = apply;",
     [
-      "    exports.__test = { Trow, SessionRow, WorkspaceRow, TreePane, ListPane, DetailPane, FilterDialog, CommandMenu, DialogHost, frameSizeOf };",
+      "    exports.__test = { Trow, SessionRow, WorkspaceRow, TreePane, ListPane, DetailPane, FilterDialog, CommandMenu, DialogHost, frameSizeOf, presenterOf };",
       "    exports.apply = apply;",
     ].join("\n"),
   );
@@ -126,10 +126,11 @@ console.log("panel render ok:", Boolean(panelTree));
 /**
  * Which presenter owns the panel?
  *
- * modal mode must be hosted by DSH's Modal when the primitives exist (the mask,
- * focus trap and stacking are the whole point), and must fall back to the local
- * shell otherwise. Window mode always keeps the local chrome, because that is
- * the plugin's own draggable window.
+ * The default is the plugin's own floating card — a three-pane explorer is a
+ * window, not a dialog. DSH's Modal is opt-in (settings.shell.modal.presentation
+ * = "native") and, when chosen, must actually host the panel so the app's mask,
+ * focus trap and stacking apply. Without the primitives the request degrades to
+ * the floating card instead of rendering nothing.
  */
 function findTag(element, tag) {
   if (!element || typeof element !== "object") return null;
@@ -150,22 +151,19 @@ function findTag(element, tag) {
   return null;
 }
 const hostedNative = findTag(panelTree, "data-modal");
-const localShell = findTag(panelTree, "data-hosted") ?? findTag(panelTree, "data-sizing");
+const shellNode = findTag(panelTree, "data-hosted");
 const primitivesAvailable = process.env.SE_SMOKE_NO_PRIMITIVES !== "1";
-const shellHost = localShell?.props?.["data-hosted"] ?? null;
+const shellHost = shellNode?.props?.["data-hosted"] ?? null;
 console.log(
   "panel presenter:",
   hostedNative ? "native-modal" : "local",
   "| data-hosted =",
   shellHost,
 );
-if (primitivesAvailable) {
-  if (!hostedNative) throw new Error("modal mode should be hosted by DSH's Modal");
-  if (shellHost !== "native") throw new Error("shell must declare data-hosted=native");
-} else {
-  if (hostedNative) throw new Error("without primitives the panel must not claim a native modal");
-  if (shellHost !== "local") throw new Error("shell must declare data-hosted=local");
-}
+// No settings were loaded (the fetch stub returns an empty result), and the
+// default presentation is the plugin's own floating card.
+if (hostedNative) throw new Error("the default presentation must not claim DSH's Modal");
+if (shellHost !== "local") throw new Error("shell must declare data-hosted=local");
 
 const settings = registered.find(([name]) => name === "settings.section")[1];
 console.log("settings render ok:", Boolean(render({ type: settings.component, props: {} })));
@@ -252,6 +250,60 @@ console.log("ListPane ok:", Boolean(render({
   },
 })));
 
+// ── containers in the list ──────────────────────────────────────────────────
+// Two regressions are pinned here, both of which were invisible in the UI:
+//   1. a user folder under the current scope must be *listed*, not only drawn
+//      in the tree (新建文件夹 created something the user could not see);
+//   2. typing a folder's name in the search box must find it, from any depth.
+const listPaneWith = (props) => render({ type: ListPane, props: {
+  sessions: [session], tree, scope: "f-root", selected: null, onSelect: noop, onCheck: noop,
+  checked: new Set(), query: "", onQuery: noop, sortKey: "updated", onSort: noop, now: Date.now(),
+  view: "details", onOpenWorkspace: noop, colWidths: { name: 260, tags: 116, note: 150, updated: 104, size: 74, status: 78 },
+  onResizeColumn: noop, listRef: null, collapsed: new Set(), onToggleChildren: noop,
+  rename: null, onBeginRename: noop, ...props,
+} });
+
+/** Collect every host element whose className matches, depth-first. */
+function findAll(element, match, out = []) {
+  if (!element || typeof element !== "object") return out;
+  if (Array.isArray(element)) {
+    for (const child of element) findAll(child, match, out);
+    return out;
+  }
+  const cls = typeof element.props?.className === "string" ? element.props.className : "";
+  if (cls && match(cls)) out.push(element);
+  for (const child of element.children ?? []) findAll(child, match, out);
+  return out;
+}
+
+/** Flatten the text under an element, for assertions about labels. */
+function textOf(element) {
+  if (element === null || element === undefined || element === false || element === true) return "";
+  if (typeof element === "string" || typeof element === "number") return String(element);
+  if (Array.isArray(element)) return element.map(textOf).join(" ");
+  return (element.children ?? []).map(textOf).join(" ");
+}
+
+const rootList = listPaneWith({});
+const folderRows = findAll(rootList, (cls) => cls.split(" ").includes("folderrow"));
+if (folderRows.length !== 1) throw new Error("the folder under the root must be listed once, got " + folderRows.length);
+if (!textOf(folderRows[0]).includes("文件夹")) throw new Error("a folder row must be labelled 文件夹");
+const wsRows = findAll(rootList, (cls) => cls.split(" ").includes("wsrow"));
+if (wsRows.length !== 1) throw new Error("the workspace must still be listed, got " + wsRows.length);
+if (textOf(wsRows[0]).includes("文件夹")) throw new Error("a workspace row must not be labelled 文件夹");
+console.log("list containers ok:", folderRows.length, "folder row(s),", wsRows.length, "workspace row(s)");
+
+// Search: the folder lives at f-root, so a query from the same scope finds it.
+const searched = listPaneWith({ query: "文件" });
+if (findAll(searched, (cls) => cls.split(" ").includes("folderrow")).length !== 1) {
+  throw new Error("searching a folder name must find the folder");
+}
+// … and so does a query that matches nothing else.
+const noHit = listPaneWith({ query: "zzz-no-such-thing" });
+if (findAll(noHit, (cls) => cls.split(" ").includes("folderrow")).length !== 0) {
+  throw new Error("a non-matching query must not list the folder");
+}
+
 const detailProps = {
   now: Date.now(), onClose: noop, onHint: noop, width: 320, parent: null, children: [], forks: [],
   forkSource: null, onOpen: noop, onEnterNode: noop, onOpenSession: noop, tagLibrary: [{ tag: "release", count: 1, preset: true }],
@@ -260,7 +312,18 @@ const detailProps = {
 };
 console.log("DetailPane (session) ok:", Boolean(render({ type: DetailPane, props: { ...detailProps, session, node: null } })));
 console.log("DetailPane (trashed) ok:", Boolean(render({ type: DetailPane, props: { ...detailProps, session: { ...session, trashed: true }, node: null } })));
-console.log("DetailPane (node) ok:", Boolean(render({ type: DetailPane, props: { ...detailProps, session: null, node: tree.nodes["w-ws-1"] } })));
+const wsDetail = render({ type: DetailPane, props: { ...detailProps, session: null, node: { ...tree.nodes["w-ws-1"], kind: "workspace" } } });
+console.log("DetailPane (workspace) ok:", Boolean(wsDetail));
+// A workspace must describe itself as a workspace. Reading the wrong flag made
+// it say 文件夹 in the detail pane.
+const wsText = textOf(wsDetail);
+if (!wsText.includes("工作区")) throw new Error("a workspace detail must say 工作区");
+if (wsText.includes("文件夹")) throw new Error("a workspace detail must not say 文件夹");
+const folderDetail = render({ type: DetailPane, props: { ...detailProps, session: null, node: tree.nodes["d-1"] } });
+const folderText = textOf(folderDetail);
+if (!folderText.includes("文件夹")) throw new Error("a folder detail must say 文件夹");
+if (folderText.includes("工作区")) throw new Error("a folder detail must not say 工作区");
+console.log("DetailPane (folder) ok:", Boolean(folderDetail));
 console.log("DetailPane (empty) ok:", Boolean(render({ type: DetailPane, props: { ...detailProps, session: null, node: null } })));
 
 console.log("FilterDialog open ok:", Boolean(render({
@@ -285,7 +348,28 @@ console.log("CommandMenu ok:", Boolean(render({
 // each presenter can be rendered directly. This is where the "native dialog"
 // requirement is actually pinned down: a confirm rendered with primitives must
 // go through Modal/RiskConfirmation, not through our own markup.
-const { DialogHost, frameSizeOf } = mod.__test;
+const { DialogHost, frameSizeOf, presenterOf } = mod.__test;
+
+// ── presenter selection ─────────────────────────────────────────────────────
+// The interesting case is the *fallback*: asking for the native modal on a host
+// without primitives must still render the floating card, not nothing at all.
+const presenterCases = [
+  [null, true, "float"],
+  [{ shell: { modal: { presentation: "float" } } }, true, "float"],
+  [{ shell: { modal: { presentation: "native" } } }, true, "native"],
+  [{ shell: { modal: { presentation: "native" } } }, false, "float"],
+  [{ shell: { modal: {} } }, true, "float"],
+  // 窗口模式 is a floating surface by definition, even if the native presenter
+  // was chosen earlier: the two settings must not fight.
+  [{ shell: { openMode: "window", modal: { presentation: "native" } } }, true, "float"],
+];
+for (const [input, primitives, expected] of presenterCases) {
+  const actual = presenterOf(input, primitives);
+  if (actual !== expected) {
+    throw new Error("presenterOf(" + JSON.stringify(input) + ", " + primitives + ") = " + actual + ", expected " + expected);
+  }
+}
+console.log("panel presenter cases ok:", presenterCases.length);
 const dialogsHosted = (dialog) =>
   render({ type: DialogHost, props: { dialog, promptRef: { current: null }, onSettle: noop } });
 
