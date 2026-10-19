@@ -149,7 +149,12 @@ test("downloadAsset resumes with Range when the mirror honours it", async () => 
     await writeFile(meta, JSON.stringify({ url: `${site.url}/asset`, etag: '"resume"', received: 100 }));
 
     const result = await downloadAsset({ urls: [`${site.url}/asset`], part, partMeta: meta });
-    assert.equal(requests[0], "bytes=100-");
+    // The first request is the size probe (a HEAD, no range); the GET after it
+    // must carry the resume offset.
+    assert.ok(
+      requests.includes("bytes=100-"),
+      `expected a ranged request, got ${JSON.stringify(requests)}`,
+    );
     assert.equal(result.receivedBytes, body.length);
     assert.equal((await readFile(part)).length, body.length);
   } finally {
