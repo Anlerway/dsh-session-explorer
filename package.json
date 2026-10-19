@@ -8,7 +8,7 @@
   },
   "main": "./lib/index.js",
   "scripts": {
-    "test": "node --test test/tree.test.mjs test/store.test.mjs test/settings.test.mjs test/datadir.test.mjs test/trash.test.mjs test/sessions.test.mjs",
+    "test": "node --test test/tree.test.mjs test/store.test.mjs test/settings.test.mjs test/datadir.test.mjs test/trash.test.mjs test/sessions.test.mjs test/move.test.mjs test/component.test.mjs",
     "smoke": "node test/render-smoke.mjs",
     "selftest": "node test/selftest.mjs"
   },
@@ -20,6 +20,7 @@
   },
   "files": [
     "lib/",
+    "assets/",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"

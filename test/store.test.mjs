@@ -274,8 +274,11 @@ test("createFolder validates its parent and appends after existing siblings", ()
   const id2 = createFolder(draft, { name: "归档" }, tree2, () => `id${(counter += 1)}`);
   assert.equal(draft.folders[id2].order, 1);
 
-  // A workspace cannot contain a folder.
-  assert.throws(() => createFolder(draft, { name: "x", parent: "w-wa" }, tree2, () => "nope"), /workspace/);
+  // 文件夹可以随意组合：a folder may be created inside a workspace…
+  const inWorkspace = createFolder(draft, { name: "工作区内的文件夹", parent: "w-wa" }, tree2, () => `id${(counter += 1)}`);
+  assert.equal(draft.folders[inWorkspace].parent, "w-wa");
+  // …but never inside a 特殊文件夹, which is a view rather than a directory.
+  assert.throws(() => createFolder(draft, { name: "x", parent: FIXED_NODES.favorites }, tree2, () => "nope"), /不能放文件夹/);
   assert.throws(() => createFolder(draft, { name: "   " }, tree2, () => "nope"), /required/);
   assert.throws(() => createFolder(draft, { name: "x".repeat(100) }, tree2, () => "nope"), /longer than/);
 });
@@ -330,7 +333,8 @@ test("a folder created through the domain layer is immediately usable by canMove
   const id = createFolder(draft, { name: "工作" }, before, () => "work");
   const after = treeWith({ folders: draft.folders, placement: draft.placement });
   assert.equal(canMove("w-wa", id, after).ok, true);
-  assert.equal(canMove(id, "w-wa", after).ok, false);
+  // A plain (workspace-free) folder may also move into a workspace.
+  assert.equal(canMove(id, "w-wa", after).ok, true);
   // …and moving the folder into itself stays refused.
   assert.equal(canMove(id, id, after).ok, false);
 });

@@ -18,6 +18,7 @@ import assert from "node:assert/strict";
 import {
   ancestorsOf,
   buildAutoTree,
+  canAcceptSessions,
   canMove,
   nearestWorkspace,
   sessionsOfNode,
@@ -211,17 +212,48 @@ test("canMove enforces the tree rules", () => {
       },
     },
   });
-  // A folder may move inside another folder…
+  // 文件夹可以随意组合：folder in folder, folder in workspace, folder at root.
   assert.equal(canMove("d-b", FIXED_NODES.root, tree).ok, true);
-  // …but not into its own descendant, and not into a workspace.
-  assert.equal(canMove("d-a", "d-b", tree).ok, false);
-  assert.equal(canMove("d-a", workspaceNodeId("wa"), tree).ok, false);
-  // A workspace may live in a folder, never in another workspace.
+  assert.equal(canMove("d-a", "d-b", tree).ok, false, "a folder may not enter its own descendant");
+  assert.equal(canMove("d-a", workspaceNodeId("wa"), tree).ok, true, "a plain folder may live in a workspace");
+  // 工作区可以进文件夹或根，永远不能进另一个工作区。
   assert.equal(canMove(workspaceNodeId("wa"), "d-a", tree).ok, true);
   assert.equal(canMove(workspaceNodeId("wa"), workspaceNodeId("wb"), tree).ok, false);
   // Fixed nodes are immovable, and unknown ids are rejected.
   assert.equal(canMove(FIXED_NODES.trash, FIXED_NODES.root, tree).ok, false);
   assert.equal(canMove("d-nope", FIXED_NODES.root, tree).ok, false);
+});
+
+test("the only structural rule is that a workspace never nests inside a workspace", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: {
+      folders: {
+        "d-hold": { id: "d-hold", name: "持有工作区", parent: FIXED_NODES.root, order: 0 },
+        "d-plain": { id: "d-plain", name: "空文件夹", parent: FIXED_NODES.root, order: 1 },
+        "d-under": { id: "d-under", name: "下级", parent: "d-hold", order: 0 },
+      },
+      // wa lives inside d-hold, so that whole subtree carries a workspace.
+      placement: { wa: "d-hold" },
+    },
+  });
+
+  // 一个文件夹里可以放第二个工作区——只要它不是套在工作区里面。
+  assert.equal(canMove(workspaceNodeId("wb"), "d-hold", tree).ok, true);
+  // 含工作区的文件夹不能进工作区（那会让里面的工作区嵌套）。
+  assert.equal(canMove("d-hold", workspaceNodeId("wb"), tree).ok, false);
+  // 空文件夹可以进工作区。
+  assert.equal(canMove("d-plain", workspaceNodeId("wb"), tree).ok, true);
+  // 含工作区的文件夹可以进另一个文件夹。
+  assert.equal(canMove("d-hold", "d-plain", tree).ok, true);
+  // 工作区可以进任意文件夹，也可以回到根。
+  assert.equal(canMove(workspaceNodeId("wa"), "d-under", tree).ok, true);
+  assert.equal(canMove(workspaceNodeId("wa"), FIXED_NODES.root, tree).ok, true);
+  // 会话只能落在工作区（这条不约束树结构，只决定拖放目标）。
+  assert.equal(canAcceptSessions(workspaceNodeId("wa"), tree), true);
+  assert.equal(canAcceptSessions(FIXED_NODES.root, tree), false);
+  assert.equal(canAcceptSessions("d-hold", tree), false);
 });
 
 test("ancestorsOf and nearestWorkspace follow the chain", () => {
