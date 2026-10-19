@@ -4,12 +4,13 @@ A resource-manager-style session browser for [DeepSeek Harness](https://github.c
 virtual folders, tags, notes, priority, trash and multi-workspace browsing on top of the
 native DSH session store — **without ever touching the physical layout of `~/.dsh`**.
 
-> Status: **P0–P2 complete, P3 in progress** — the plugin loads, the sidebar entry opens a
-> three-pane explorer over the real session store, and the sidecar data directory is
-> created. Sessions can be renamed, archived, pinned and forked through DSH's own APIs;
-> folders, tags, notes, the shared tag library and the data-directory migration are live.
-> Trash, undo, detached windows and the browser component still arrive with P4…P6 (see
-> `实现粗规划.md` one directory up).
+> Status: **P0–P4 complete** — the plugin loads, the sidebar entry opens a three-pane
+> explorer over the real session store, and the sidecar data directory is created.
+> Sessions can be renamed (inline, in the tree, the list and the detail pane), archived,
+> pinned, forked, moved, tagged, noted, filtered and trashed; deleting moves the session
+> payload into a real bin under the data directory, from which it can be restored or
+> purged, and every destructive step can be undone with Ctrl+Z. Detached windows and the
+> browser component still arrive with P5/P6 (see `实现粗规划.md` one directory up).
 
 ## Shape
 
@@ -54,7 +55,7 @@ Layout created at boot:
   annotations.v1.json  per-session tags, note, priority, favorite/todo, tag library
   settings.v1.json     shell/component preferences and the current data directory
   .tmp/                scratch space for atomic writes, emptied on every start
-  trash/               session artifacts moved here by "delete"
+  trash/               the bin: index.v1.json + one payload directory per session
 ```
 
 The location is resolved in three steps, in this order:
@@ -92,6 +93,7 @@ Everything answers with one of two envelopes:
 | `POST /sessions/:id/rename` | DSH's own rename — appends a `session/title` event, no sidecar write |
 | `POST /workspaces/:id/rename` | Rename a workspace through the registry |
 | `POST /sessions/:id/archive`, `/unarchive`, `/pin`, `/unpin`, `/fork` | Native lifecycle operations |
+| `POST /trash`, `POST /restore`, `POST /purge`, `POST /trash/empty` | The bin: move the payload out, put it back, delete it for good, empty it |
 | `GET /datadir`, `POST /datadir/inspect`, `POST /datadir/migrate` | Describe, pre-flight and perform the data-directory move |
 
 Mutating routes accept an expected revision through `If-Match` or a `revision` field in the
@@ -110,7 +112,8 @@ Both labels are locale-bound thunks, so switching the app language re-renders th
 ## Tests
 
 ```bash
-npm test   # node --test: tree, store, settings and data-directory suites
+npm test   # node --test: tree, store, settings, data-directory and trash suites
+npm run smoke  # render every client component once against a stub React
 ```
 
 The suites run against temporary directories (`mkdtemp`) and hand-written `paths` objects,

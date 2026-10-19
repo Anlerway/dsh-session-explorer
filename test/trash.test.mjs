@@ -1,0 +1,325 @@
+/**
+ * Tests for the trash.
+ *
+ *   node --test test/trash.test.mjs
+ *
+ * Deleting a session is a real directory move, so the properties worth testing
+ * are filesystem properties: the payload really left DSH's sessions tree, it
+ * really came back to the right project directory, and an interrupted move
+ * leaves something reconcilable rather than a lost conversation.
+ *
+ * The fake api is deliberately thin — a home, a data directory and a stubbed
+ * reader — because everything interesting happens in the filesystem.
+ */
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { zstdCompressSync } from "node:zlib";
+
+import {
+  emptyTrash,
+  purgeSessions,
+  reconcileTrash,
+  restoreSessions,
+  trashSessions,
+} from "../lib/host/trash.js";
+import { ensureDataDir, dataPaths } from "../lib/paths.js";
+import { openDocuments } from "../lib/store/documents.js";
+
+const LOG = "session.v4.jsonl.zstd";
+
+/**
+ * Write a session log whose first frame is a valid header.
+ *
+ * @param {string} home
+ * @param {string} project
+ * @param {string} sessionId
+ * @param {{ cwd?: string, workspaceId?: string }} [extra]
+ * @returns {Promise<string>} the session directory
+ */
+async function writeSession(home, project, sessionId, extra = {}) {
+  const dir = join(home, "sessions", project, sessionId);
+  await mkdir(dir, { recursive: true });
+  const header = {
+    type: "session",
+    version: 4,
+    id: sessionId,
+    createdAt: 1_700_000_000_000,
+    cwd: extra.cwd ?? "C:\\work",
+  };
+  await writeFile(join(dir, LOG), zstdCompressSync(Buffer.from(JSON.stringify(header) + "\n")));
+  return dir;
+}
+
+/**
+ * @param {{ home: string, dataDir: string, sessions?: object[] }} input
+ */
+function fakeApi({ home, dataDir, sessions = [] }) {
+  ensureDataDir(dataDir);
+  const paths = dataPaths(dataDir);
+  return {
+    dshHome: () => home,
+    paths,
+    documents: openDocuments(paths),
+    invalidated: 0,
+    reader: {
+      async snapshot() {
+        return { view: { sessions } };
+      },
+      invalidate() {
+        this.invalidated += 1;
+      },
+    },
+  };
+}
+
+async function sandbox() {
+  const root = await mkdtemp(join(tmpdir(), "se-trash-"));
+  return {
+    root,
+    home: join(root, "home"),
+    dataDir: join(root, "data"),
+    cleanup: () => rm(root, { recursive: true, force: true }),
+  };
+}
+
+test("trashing moves the session directory into the bin", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({
+      home: box.home,
+      dataDir: box.dataDir,
+      sessions: [{ id: "s1", title: "first", workspaceId: "w1", workspaceTitle: "proj" }],
+    });
+    const dir = await writeSession(box.home, "proj", "s1");
+
+    const result = await trashSessions(api, ["s1"]);
+    assert.deepEqual(result.trashed, ["s1"]);
+    assert.equal(existsSync(dir), false, "payload must leave the sessions tree");
+
+    const index = await api.documents.trash.read();
+    const entry = index.entries.s1;
+    assert.equal(entry.title, "first", "the title is snapshotted");
+    assert.equal(entry.workspaceId, "w1");
+    assert.equal(entry.originalLogPath, join(dir, LOG));
+    assert.equal(entry.pending, undefined, "a finished move is not pending");
+    assert.equal(existsSync(join(box.dataDir, "trash", entry.trashId, LOG)), true);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("trashing skips unknown ids instead of failing the batch", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({ home: box.home, dataDir: box.dataDir });
+    await writeSession(box.home, "proj", "s1");
+    const result = await trashSessions(api, ["s1", "nope"]);
+    assert.deepEqual(result.trashed, ["s1"]);
+    assert.deepEqual(result.skipped, ["nope"]);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("trashing a running session is refused", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({
+      home: box.home,
+      dataDir: box.dataDir,
+      sessions: [{ id: "s1", title: "live", running: true }],
+    });
+    await writeSession(box.home, "proj", "s1");
+    await assert.rejects(() => trashSessions(api, ["s1"]), (error) => error.code === "session-active");
+    const index = await api.documents.trash.read();
+    assert.deepEqual(Object.keys(index.entries), [], "a refusal leaves no entry behind");
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("restore puts the session back where it came from", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({
+      home: box.home,
+      dataDir: box.dataDir,
+      sessions: [{ id: "s1", title: "first", workspaceId: "w1" }],
+    });
+    const dir = await writeSession(box.home, "proj", "s1");
+    await trashSessions(api, ["s1"]);
+
+    const result = await restoreSessions(api, ["s1"]);
+    assert.deepEqual(result.restored, ["s1"]);
+    assert.equal(existsSync(join(dir, LOG)), true);
+    const index = await api.documents.trash.read();
+    assert.deepEqual(Object.keys(index.entries), []);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("restore falls back to a project directory of the same workspace", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({
+      home: box.home,
+      dataDir: box.dataDir,
+      sessions: [{ id: "s1", title: "first", workspaceId: "w1" }],
+    });
+    const original = await writeSession(box.home, "gone", "s1");
+    await trashSessions(api, ["s1"]);
+
+    // The recorded project directory disappears while the session sits in the
+    // bin, but another workspace project still exists.
+    await rm(dirname(original), { recursive: true, force: true });
+    const survivor = await writeSession(box.home, "alive", "s2");
+
+    const result = await restoreSessions(api, ["s1"]);
+    assert.deepEqual(result.restored, ["s1"]);
+    const landed = join(dirname(survivor), "s1", LOG);
+    assert.equal(existsSync(landed), true);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("restore recreates the recorded directory when nothing is left", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({ home: box.home, dataDir: box.dataDir, sessions: [{ id: "s1" }] });
+    const original = await writeSession(box.home, "gone", "s1");
+    await trashSessions(api, ["s1"]);
+    await rm(join(box.home, "sessions"), { recursive: true, force: true });
+
+    const result = await restoreSessions(api, ["s1"]);
+    assert.deepEqual(result.restored, ["s1"]);
+    assert.equal(existsSync(join(original, LOG)), true);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("restore refuses to overwrite a directory that reappeared", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({ home: box.home, dataDir: box.dataDir, sessions: [{ id: "s1" }] });
+    const dir = await writeSession(box.home, "proj", "s1");
+    await trashSessions(api, ["s1"]);
+    await mkdir(dir, { recursive: true });
+
+    await assert.rejects(() => restoreSessions(api, ["s1"]), (error) => error.code === "target-exists");
+    const index = await api.documents.trash.read();
+    assert.equal(index.entries.s1.pending, undefined, "the entry survives a refusal");
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("restore drops a stale entry whose payload is gone", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({ home: box.home, dataDir: box.dataDir, sessions: [{ id: "s1" }] });
+    await writeSession(box.home, "proj", "s1");
+    await trashSessions(api, ["s1"]);
+    const index = await api.documents.trash.read();
+    await rm(join(box.dataDir, "trash", index.entries.s1.trashId), { recursive: true, force: true });
+
+    const result = await restoreSessions(api, ["s1"]);
+    assert.deepEqual(result.restored, []);
+    assert.deepEqual(result.skipped, ["s1"]);
+    assert.deepEqual(Object.keys((await api.documents.trash.read()).entries), []);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("purge deletes the payload and the entry", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({ home: box.home, dataDir: box.dataDir, sessions: [{ id: "s1" }] });
+    await writeSession(box.home, "proj", "s1");
+    await trashSessions(api, ["s1"]);
+    const index = await api.documents.trash.read();
+    const payload = join(box.dataDir, "trash", index.entries.s1.trashId);
+
+    const result = await purgeSessions(api, ["s1"]);
+    assert.deepEqual(result.purged, ["s1"]);
+    assert.equal(existsSync(payload), false);
+    assert.deepEqual(Object.keys((await api.documents.trash.read()).entries), []);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("emptyTrash purges every entry", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({
+      home: box.home,
+      dataDir: box.dataDir,
+      sessions: [{ id: "s1" }, { id: "s2" }],
+    });
+    await writeSession(box.home, "proj", "s1");
+    await writeSession(box.home, "proj", "s2");
+    await trashSessions(api, ["s1", "s2"]);
+
+    const result = await emptyTrash(api);
+    assert.equal(result.purged.length, 2);
+    assert.deepEqual(Object.keys((await api.documents.trash.read()).entries), []);
+    assert.deepEqual(await readdir(join(box.dataDir, "trash")), ["index.v1.json"]);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("reconcile promotes a pending entry whose payload arrived", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({ home: box.home, dataDir: box.dataDir, sessions: [{ id: "s1" }] });
+    await writeSession(box.home, "proj", "s1");
+    await trashSessions(api, ["s1"]);
+    const index = await api.documents.trash.read();
+    const trashId = index.entries.s1.trashId;
+    await api.documents.trash.mutate((draft) => {
+      draft.entries.s1.pending = true;
+    });
+
+    const result = await reconcileTrash(api);
+    assert.deepEqual(result.promoted, ["s1"]);
+    assert.deepEqual(result.dropped, []);
+    assert.equal((await api.documents.trash.read()).entries.s1.pending, undefined);
+    assert.equal(existsSync(join(box.dataDir, "trash", trashId, LOG)), true);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("reconcile drops a pending entry whose payload never moved", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({ home: box.home, dataDir: box.dataDir, sessions: [{ id: "s1" }] });
+    const dir = await writeSession(box.home, "proj", "s1");
+    await api.documents.trash.mutate((draft) => {
+      draft.entries.s1 = {
+        sessionId: "s1",
+        trashId: "t-crashed",
+        title: "first",
+        originalLogPath: join(dir, LOG),
+        deletedAt: 1,
+        pending: true,
+      };
+    });
+
+    const result = await reconcileTrash(api);
+    assert.deepEqual(result.dropped, ["s1"]);
+    assert.deepEqual(Object.keys((await api.documents.trash.read()).entries), []);
+  } finally {
+    await box.cleanup();
+  }
+});
