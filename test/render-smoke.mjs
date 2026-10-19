@@ -14,9 +14,29 @@
  */
 import { readFileSync } from "node:fs";
 
+// A minimal class base, because PanelBoundary is the one class component in the
+// bundle (an error boundary has no hook equivalent).
+class StubComponent {
+  constructor(props) {
+    this.props = props;
+    this.state = {};
+  }
+  setState(patch) {
+    this.state = { ...this.state, ...(typeof patch === "function" ? patch(this.state) : patch) };
+  }
+}
+
 const React = {
+  Component: StubComponent,
   Fragment: Symbol("Fragment"),
-  createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+  // React puts children in props.children as well as passing them positionally;
+  // PanelBoundary renders `this.props.children`, so the stub must match.
+  createElement: (type, props, ...children) => {
+    const merged = { ...(props ?? {}) };
+    if (children.length === 1) merged.children = children[0];
+    else if (children.length > 1) merged.children = children;
+    return { type, props: merged, children };
+  },
   createPortal: (node) => node,
   useRef: (initial) => ({ current: initial }),
   useState: (initial) => [typeof initial === "function" ? initial() : initial, () => {}],
@@ -53,20 +73,11 @@ globalThis.fetch = async () => ({ json: async () => ({ ok: true, result: {} }), 
 let mod = null;
 const requireShim = (name) => {
   if (name === "react") return React;
-  // The primitives are optional in production too (the plugin degrades to its
-  // own dialogs). The harness provides a stub so the *native* branch is the one
-  // exercised here; a second, separate run covers the fallback.
-  if (name === "@deepseek-ai/dsh-client-ui-primitives") {
-    if (process.env.SE_SMOKE_NO_PRIMITIVES === "1") throw new Error("not provided");
-    // The stubs must forward children: a component receives them as the third
-    // argument of createElement, not only in props. Dropping them would hide
-    // the whole panel — exactly what the presenter assertion is meant to catch.
-    return {
-      Modal: (props, ...children) => React.createElement("div", { "data-modal": true }, ...children),
-      RiskConfirmation: (props, ...children) => React.createElement("div", { "data-risk": true }, ...children),
-      Button: (props, ...children) => React.createElement("button", props, ...children),
-    };
-  }
+  // The plugin used to probe @deepseek-ai/dsh-client-ui-primitives for Modal /
+  // RiskConfirmation. It no longer does: the panel and every dialog are drawn by
+  // the plugin itself, so a host without that package behaves identically. The
+  // shim still refuses it, which pins exactly that: requiring it would throw and
+  // fail the whole run.
   throw new Error("unexpected require: " + name);
 };
 
@@ -77,7 +88,7 @@ const source = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8"
   .replace(
     "    exports.apply = apply;",
     [
-      "    exports.__test = { Trow, SessionRow, WorkspaceRow, TreePane, ListPane, DetailPane, FilterDialog, CommandMenu, DialogHost, frameSizeOf, presenterOf };",
+      "    exports.__test = { Trow, SessionRow, ContainerRow, TreePane, ListPane, DetailPane, FilterDialog, CommandMenu, DialogHost, frameSizeOf, PanelBoundary };",
       "    exports.apply = apply;",
     ].join("\n"),
   );
@@ -95,11 +106,45 @@ function render(element) {
   // Children are passed as trailing arguments, exactly as React does: a
   // component that destructures `props` alone still receives its nested
   // elements through createElement's rest parameter.
-  if (typeof element.type === "function") return render(element.type(element.props, ...(element.children ?? [])));
-  // Host elements keep their props: the presenter assertion below reads
-  // data-modal / data-hosted off them, and dropping props would make every
-  // assertion vacuously pass.
+  if (typeof element.type === "function") {
+    // A class component is constructed and rendered; a function component is
+    // called. PanelBoundary is the only class in the bundle.
+    if (element.type.prototype && typeof element.type.prototype.render === "function") {
+      const instance = new element.type(element.props ?? {});
+      instance.props = element.props ?? {};
+      return render(instance.render());
+    }
+    return render(element.type(element.props, ...(element.children ?? [])));
+  }
+  // Host elements keep their props: the assertions below read data-mode and the
+  // class names off them, and dropping props would make them vacuously pass.
   return { type: element.type, props: element.props, children: (element.children ?? []).flatMap(render) };
+}
+
+/** Collect every host element whose className matches, depth-first. */
+function findAll(element, match, out = []) {
+  if (!element || typeof element !== "object") return out;
+  if (Array.isArray(element)) {
+    for (const child of element) findAll(child, match, out);
+    return out;
+  }
+  const cls = typeof element.props?.className === "string" ? element.props.className : "";
+  if (cls && match(cls)) out.push(element);
+  for (const child of element.children ?? []) findAll(child, match, out);
+  return out;
+}
+
+/** Flatten the text under an element, for assertions about labels. */
+function textOf(element) {
+  if (element === null || element === undefined || element === false || element === true) return "";
+  if (typeof element === "string" || typeof element === "number") return String(element);
+  if (Array.isArray(element)) return element.map(textOf).join(" ");
+  return (element.children ?? []).map(textOf).join(" ");
+}
+
+/** The first host element carrying one of the given class names. */
+function hasClass(name) {
+  return (cls) => cls.split(" ").includes(name);
 }
 
 const registered = [];
@@ -123,47 +168,17 @@ mod.panelStore.set(true);
 const panelTree = render({ type: footer.component, props: { wide: true, t: (k) => k } });
 console.log("panel render ok:", Boolean(panelTree));
 
-/**
- * Which presenter owns the panel?
- *
- * The default is the plugin's own floating card — a three-pane explorer is a
- * window, not a dialog. DSH's Modal is opt-in (settings.shell.modal.presentation
- * = "native") and, when chosen, must actually host the panel so the app's mask,
- * focus trap and stacking apply. Without the primitives the request degrades to
- * the floating card instead of rendering nothing.
- */
-function findTag(element, tag) {
-  if (!element || typeof element !== "object") return null;
-  if (Array.isArray(element)) {
-    for (const child of element) {
-      const hit = findTag(child, tag);
-      if (hit) return hit;
-    }
-    return null;
-  }
-  // A prop may be false-y (data-hosted="local" is a string, but a boolean
-  // attribute would be true), so presence is checked with `in`.
-  if (element.props && tag in element.props) return element;
-  for (const child of element.children ?? []) {
-    const hit = findTag(child, tag);
-    if (hit) return hit;
-  }
-  return null;
-}
-const hostedNative = findTag(panelTree, "data-modal");
-const shellNode = findTag(panelTree, "data-hosted");
-const primitivesAvailable = process.env.SE_SMOKE_NO_PRIMITIVES !== "1";
-const shellHost = shellNode?.props?.["data-hosted"] ?? null;
-console.log(
-  "panel presenter:",
-  hostedNative ? "native-modal" : "local",
-  "| data-hosted =",
-  shellHost,
-);
-// No settings were loaded (the fetch stub returns an empty result), and the
-// default presentation is the plugin's own floating card.
-if (hostedNative) throw new Error("the default presentation must not claim DSH's Modal");
-if (shellHost !== "local") throw new Error("shell must declare data-hosted=local");
+// ── surface mode ────────────────────────────────────────────────────────────
+// Two modes only: 浮窗 and 独立窗口. The old "let DSH's Modal host the panel"
+// axis is gone, and with it the data-hosted attribute that marked it.
+const { Trow, SessionRow, ContainerRow, TreePane, ListPane, DetailPane, FilterDialog, CommandMenu, DialogHost, frameSizeOf, PanelBoundary } = mod.__test;
+
+const shellNode = findAll(panelTree, hasClass("se-shell"))[0] ?? null;
+if (!shellNode) throw new Error("the panel must render a .se-shell");
+if ("data-hosted" in (shellNode.props ?? {})) throw new Error("data-hosted must be gone: the native presenter axis was removed");
+if ("data-mode" in (shellNode.props ?? {})) throw new Error("data-mode must be gone: there is one surface, not two");
+if (findAll(panelTree, hasClass("se-native-frame")).length > 0) throw new Error("no native frame may be rendered");
+console.log("panel surface: single floating card");
 
 const settings = registered.find(([name]) => name === "settings.section")[1];
 console.log("settings render ok:", Boolean(render({ type: settings.component, props: {} })));
@@ -171,8 +186,6 @@ console.log("settings render ok:", Boolean(render({ type: settings.component, pr
 // ── components with data ────────────────────────────────────────────────────
 // A render with boot.data === null only exercises the loading branch, so the
 // row components are called directly with realistic props.
-const { Trow, SessionRow, WorkspaceRow, TreePane, ListPane, DetailPane, FilterDialog, CommandMenu } = mod.__test;
-
 const session = {
   id: "session-1",
   title: "示例会话",
@@ -216,45 +229,50 @@ console.log("SessionRow (trashed) ok:", Boolean(render({
   type: SessionRow,
   props: { session: { ...session, trashed: true }, selected: false, now: Date.now(), onSelect: noop, checked: false, onCheck: noop, onBeginRename: noop },
 })));
-console.log("WorkspaceRow ok:", Boolean(render({
-  type: WorkspaceRow,
-  props: {
-    node: { id: "w-ws-1", workspaceId: "ws-1", name: "project", path: "C:\\work", type: "workspace" },
-    count: 1, selected: false, onOpen: noop, checked: false, onCheck: noop, onSelect: noop, onBeginRename: noop, rename,
-  },
+
+const workspaceNode = { id: "w-ws-1", workspaceId: "ws-1", name: "project", path: "C:\\work", type: "workspace", kind: "workspace" };
+const folderNode = { id: "d-1", type: "folder", name: "文件夹", fixed: false, kind: "folder", parent: "f-root", order: 3 };
+const specialNode = { id: "f-favorites", type: "folder", name: "收藏", fixed: true, kind: "favorites", parent: "f-root", order: 3 };
+
+console.log("ContainerRow (workspace) ok:", Boolean(render({
+  type: ContainerRow,
+  props: { node: workspaceNode, count: 1, selected: false, onOpen: noop, checked: false, onCheck: noop, onSelect: noop, onBeginRename: noop, rename },
 })));
+console.log("ContainerRow (folder) ok:", Boolean(render({
+  type: ContainerRow,
+  props: { node: folderNode, count: 0, selected: false, onOpen: noop, checked: false, onCheck: noop, onSelect: noop, onBeginRename: noop, rename },
+})));
+
+// A 特殊文件夹 may not be renamed, may not be deleted, and must not even offer a
+// checkbox: it is a view over the session set, not the user's object.
+const specialRow = render({ type: ContainerRow, props: { node: specialNode, count: 3, selected: false, onOpen: noop, checked: false, onCheck: noop, onSelect: noop, onBeginRename: noop } });
+if (findAll(specialRow, hasClass("chk")).length !== 0) throw new Error("a 特殊文件夹 must not render a checkbox");
+if (findAll(specialRow, hasClass("nm-editbtn")).length !== 0) throw new Error("a 特殊文件夹 must not render a rename pencil");
+if (!textOf(specialRow).includes("特殊文件夹")) throw new Error("a 特殊文件夹 must be labelled as such");
+console.log("ContainerRow (special) ok:", Boolean(specialRow));
 
 const tree = {
   nodes: {
     "f-root": { id: "f-root", type: "folder", name: "根目录", fixed: true, kind: "root", parent: null, order: 0 },
     "f-trash": { id: "f-trash", type: "folder", name: "回收站", fixed: true, kind: "trash", parent: null, order: 1 },
+    "f-ungrouped": { id: "f-ungrouped", type: "folder", name: "未分组", fixed: true, kind: "ungrouped", parent: "f-root", order: 1 },
+    "f-todos": { id: "f-todos", type: "folder", name: "待办", fixed: true, kind: "todos", parent: "f-root", order: 2 },
+    "f-favorites": { id: "f-favorites", type: "folder", name: "收藏", fixed: true, kind: "favorites", parent: "f-root", order: 3 },
     "w-ws-1": { id: "w-ws-1", type: "workspace", name: "project", workspaceId: "ws-1", kind: "workspace", parent: "f-root", order: 2 },
     "d-1": { id: "d-1", type: "folder", name: "文件夹", fixed: false, kind: "folder", parent: "f-root", order: 3 },
   },
-  children: { "f-root": ["w-ws-1", "d-1"], "f-trash": [], "w-ws-1": [], "d-1": [] },
-  counts: { "f-root": 1, "f-trash": 0, "w-ws-1": 1, "d-1": 0 },
+  children: {
+    "f-root": ["w-ws-1", "d-1", "f-ungrouped", "f-todos", "f-favorites"],
+    "f-trash": [], "f-ungrouped": [], "f-todos": [], "f-favorites": [], "w-ws-1": [], "d-1": [],
+  },
+  counts: { "f-root": 1, "f-trash": 0, "f-ungrouped": 0, "f-todos": 0, "f-favorites": 0, "w-ws-1": 1, "d-1": 0 },
   roots: ["f-root", "f-trash"],
 };
 console.log("TreePane ok:", Boolean(render({
   type: TreePane,
   props: { tree, scope: "f-root", onSelect: noop, expanded: new Set(["f-root"]), onToggle: noop, width: 260, onMove: noop, rename, onBeginRename: noop },
 })));
-console.log("ListPane ok:", Boolean(render({
-  type: ListPane,
-  props: {
-    sessions: [session], tree, scope: "f-root", selected: session.id, onSelect: noop, onCheck: noop,
-    checked: new Set(), query: "", onQuery: noop, sortKey: "updated", onSort: noop, now: Date.now(),
-    view: "details", onOpenWorkspace: noop, colWidths: { name: 260, tags: 116, note: 150, updated: 104, size: 74, status: 78 },
-    onResizeColumn: noop, listRef: null, collapsed: new Set(), onToggleChildren: noop,
-    rename, onBeginRename: noop,
-  },
-})));
 
-// ── containers in the list ──────────────────────────────────────────────────
-// Two regressions are pinned here, both of which were invisible in the UI:
-//   1. a user folder under the current scope must be *listed*, not only drawn
-//      in the tree (新建文件夹 created something the user could not see);
-//   2. typing a folder's name in the search box must find it, from any depth.
 const listPaneWith = (props) => render({ type: ListPane, props: {
   sessions: [session], tree, scope: "f-root", selected: null, onSelect: noop, onCheck: noop,
   checked: new Set(), query: "", onQuery: noop, sortKey: "updated", onSort: noop, now: Date.now(),
@@ -262,46 +280,57 @@ const listPaneWith = (props) => render({ type: ListPane, props: {
   onResizeColumn: noop, listRef: null, collapsed: new Set(), onToggleChildren: noop,
   rename: null, onBeginRename: noop, ...props,
 } });
+console.log("ListPane ok:", Boolean(listPaneWith({ selected: session.id })));
 
-/** Collect every host element whose className matches, depth-first. */
-function findAll(element, match, out = []) {
-  if (!element || typeof element !== "object") return out;
-  if (Array.isArray(element)) {
-    for (const child of element) findAll(child, match, out);
-    return out;
-  }
-  const cls = typeof element.props?.className === "string" ? element.props.className : "";
-  if (cls && match(cls)) out.push(element);
-  for (const child of element.children ?? []) findAll(child, match, out);
-  return out;
-}
-
-/** Flatten the text under an element, for assertions about labels. */
-function textOf(element) {
-  if (element === null || element === undefined || element === false || element === true) return "";
-  if (typeof element === "string" || typeof element === "number") return String(element);
-  if (Array.isArray(element)) return element.map(textOf).join(" ");
-  return (element.children ?? []).map(textOf).join(" ");
-}
-
+// ── containers in the list ──────────────────────────────────────────────────
+// Three things are pinned here, all of which were invisible in the UI:
+//   1. a user folder under the current scope must be *listed*, not only drawn
+//      in the tree (新建文件夹 created something the user could not see);
+//   2. workspaces and folders are *separate groups* — mixing them made a folder
+//      look like a workspace with the wrong icon;
+//   3. typing a folder's name in the search box must find it, from any depth.
 const rootList = listPaneWith({});
-const folderRows = findAll(rootList, (cls) => cls.split(" ").includes("folderrow"));
+const folderRows = findAll(rootList, hasClass("folderrow"));
 if (folderRows.length !== 1) throw new Error("the folder under the root must be listed once, got " + folderRows.length);
 if (!textOf(folderRows[0]).includes("文件夹")) throw new Error("a folder row must be labelled 文件夹");
-const wsRows = findAll(rootList, (cls) => cls.split(" ").includes("wsrow"));
+const wsRows = findAll(rootList, hasClass("wsrow"));
 if (wsRows.length !== 1) throw new Error("the workspace must still be listed, got " + wsRows.length);
 if (textOf(wsRows[0]).includes("文件夹")) throw new Error("a workspace row must not be labelled 文件夹");
-console.log("list containers ok:", folderRows.length, "folder row(s),", wsRows.length, "workspace row(s)");
+const specialRows = findAll(rootList, hasClass("specialrow"));
+// 未分组 / 收藏 / 待办 — and deliberately NOT 根目录: you are already in it.
+if (specialRows.length !== 3) throw new Error("根目录 must list the three 特殊文件夹, got " + specialRows.length);
+if (findAll(rootList, hasClass("specialrow")).some((row) => textOf(row).includes("根目录"))) {
+  throw new Error("根目录 must not list itself");
+}
+
+// The group captions are the user-visible answer to "分开".
+const captions = findAll(rootList, hasClass("grp")).map((group) => textOf(group));
+if (!captions.some((text) => text.includes("特殊文件夹"))) throw new Error("the special folders need their own group, got " + JSON.stringify(captions));
+// Folders before workspaces: the user's own containers come first.
+// A caption carries its count ("文件夹 1"), so match on the word and exclude
+// the 特殊文件夹 band, which also contains it.
+const folderAt = captions.findIndex((text) => text.includes("文件夹") && !text.includes("特殊"));
+const workspaceAt = captions.findIndex((text) => text.includes("工作区"));
+if (folderAt < 0) throw new Error("folders need their own group, got " + JSON.stringify(captions));
+if (workspaceAt < 0) throw new Error("workspaces need their own group, got " + JSON.stringify(captions));
+if (folderAt > workspaceAt) throw new Error("文件夹 must come before 工作区, got " + JSON.stringify(captions));
+console.log("list containers ok:", folderRows.length, "folder,", wsRows.length, "workspace,", specialRows.length, "special");
+console.log("groups:", captions.join(" | "));
 
 // Search: the folder lives at f-root, so a query from the same scope finds it.
 const searched = listPaneWith({ query: "文件" });
-if (findAll(searched, (cls) => cls.split(" ").includes("folderrow")).length !== 1) {
+if (findAll(searched, hasClass("folderrow")).length !== 1) {
   throw new Error("searching a folder name must find the folder");
 }
-// … and so does a query that matches nothing else.
+// … and a query that matches nothing lists nothing.
 const noHit = listPaneWith({ query: "zzz-no-such-thing" });
-if (findAll(noHit, (cls) => cls.split(" ").includes("folderrow")).length !== 0) {
+if (findAll(noHit, hasClass("folderrow")).length !== 0) {
   throw new Error("a non-matching query must not list the folder");
+}
+// The bin shows trashed sessions only: no containers to navigate out of.
+const trashList = listPaneWith({ scope: "f-trash" });
+if (findAll(trashList, hasClass("frow")).length !== 0) {
+  throw new Error("the bin must not list containers");
 }
 
 const detailProps = {
@@ -312,14 +341,14 @@ const detailProps = {
 };
 console.log("DetailPane (session) ok:", Boolean(render({ type: DetailPane, props: { ...detailProps, session, node: null } })));
 console.log("DetailPane (trashed) ok:", Boolean(render({ type: DetailPane, props: { ...detailProps, session: { ...session, trashed: true }, node: null } })));
-const wsDetail = render({ type: DetailPane, props: { ...detailProps, session: null, node: { ...tree.nodes["w-ws-1"], kind: "workspace" } } });
+const wsDetail = render({ type: DetailPane, props: { ...detailProps, session: null, node: workspaceNode } });
 console.log("DetailPane (workspace) ok:", Boolean(wsDetail));
 // A workspace must describe itself as a workspace. Reading the wrong flag made
 // it say 文件夹 in the detail pane.
 const wsText = textOf(wsDetail);
 if (!wsText.includes("工作区")) throw new Error("a workspace detail must say 工作区");
 if (wsText.includes("文件夹")) throw new Error("a workspace detail must not say 文件夹");
-const folderDetail = render({ type: DetailPane, props: { ...detailProps, session: null, node: tree.nodes["d-1"] } });
+const folderDetail = render({ type: DetailPane, props: { ...detailProps, session: null, node: folderNode } });
 const folderText = textOf(folderDetail);
 if (!folderText.includes("文件夹")) throw new Error("a folder detail must say 文件夹");
 if (folderText.includes("工作区")) throw new Error("a folder detail must not say 工作区");
@@ -344,32 +373,10 @@ console.log("CommandMenu ok:", Boolean(render({
 })));
 
 // ── dialogs ─────────────────────────────────────────────────────────────────
-// The dialog components are private; expose them the same way as the rows so
-// each presenter can be rendered directly. This is where the "native dialog"
-// requirement is actually pinned down: a confirm rendered with primitives must
-// go through Modal/RiskConfirmation, not through our own markup.
-const { DialogHost, frameSizeOf, presenterOf } = mod.__test;
-
-// ── presenter selection ─────────────────────────────────────────────────────
-// The interesting case is the *fallback*: asking for the native modal on a host
-// without primitives must still render the floating card, not nothing at all.
-const presenterCases = [
-  [null, true, "float"],
-  [{ shell: { modal: { presentation: "float" } } }, true, "float"],
-  [{ shell: { modal: { presentation: "native" } } }, true, "native"],
-  [{ shell: { modal: { presentation: "native" } } }, false, "float"],
-  [{ shell: { modal: {} } }, true, "float"],
-  // 窗口模式 is a floating surface by definition, even if the native presenter
-  // was chosen earlier: the two settings must not fight.
-  [{ shell: { openMode: "window", modal: { presentation: "native" } } }, true, "float"],
-];
-for (const [input, primitives, expected] of presenterCases) {
-  const actual = presenterOf(input, primitives);
-  if (actual !== expected) {
-    throw new Error("presenterOf(" + JSON.stringify(input) + ", " + primitives + ") = " + actual + ", expected " + expected);
-  }
-}
-console.log("panel presenter cases ok:", presenterCases.length);
+// Every dialog is local now, and it must be local *and* on the plugin's dialog
+// layer. The old design rendered destructive confirms through DSH's Modal,
+// which sits at the app's dialog tier — below this panel — so a confirmation
+// could be painted underneath the window that opened it.
 const dialogsHosted = (dialog) =>
   render({ type: DialogHost, props: { dialog, promptRef: { current: null }, onSettle: noop } });
 
@@ -407,20 +414,33 @@ const promptDialog = dialogsHosted({
 console.log("DialogHost confirm ok:", Boolean(plainConfirm));
 console.log("DialogHost risk ok:", Boolean(riskConfirm));
 console.log("DialogHost prompt ok:", Boolean(promptDialog));
-if (primitivesAvailable) {
-  if (!findTag(plainConfirm, "data-modal")) throw new Error("a confirm must be hosted by DSH's Modal");
-  if (!findTag(riskConfirm, "data-risk")) throw new Error("a destructive confirm must use RiskConfirmation");
-  if (!findTag(promptDialog, "data-modal")) throw new Error("a prompt must be hosted by DSH's Modal");
-  console.log("dialogs presenter: native");
-} else {
-  if (findTag(plainConfirm, "data-modal")) throw new Error("without primitives there is no native modal");
-  console.log("dialogs presenter: local");
+
+for (const [label, dialog] of [["confirm", plainConfirm], ["risk", riskConfirm], ["prompt", promptDialog]]) {
+  if (!dialog) throw new Error("the " + label + " dialog must render");
+  if (findAll(dialog, hasClass("fmodal")).length !== 1) {
+    throw new Error("the " + label + " dialog must be a local .fmodal layer");
+  }
+  if (findAll(dialog, (cls) => cls.includes("se-native-dialog")).length > 0) {
+    throw new Error("the " + label + " dialog must not use the removed native class");
+  }
 }
+// The acknowledgement checkbox is what makes 永久删除 hard to trigger by accident.
+if (findAll(riskConfirm, hasClass("se-dlg-ack")).length !== 1) {
+  throw new Error("a destructive confirm must carry the acknowledgement checkbox");
+}
+if (findAll(plainConfirm, hasClass("se-dlg-ack")).length !== 0) {
+  throw new Error("an ordinary confirm must not carry an acknowledgement");
+}
+const dialogLayer = findAll(plainConfirm, hasClass("fmodal"))[0];
+if (dialogLayer.props?.onMouseDown === undefined) {
+  throw new Error("the dialog backdrop must dismiss on mousedown, not on any click");
+}
+console.log("dialogs presenter: local (above the panel)");
 
 // ── sizing ──────────────────────────────────────────────────────────────────
 // The host has modalSizeOf; the bundle cannot import it, so the two are pinned
-// to the same answers here. A drift would make the native Modal frame and the
-// local shell disagree about what "中" means.
+// to the same answers here. A drift would make the panel and the settings page
+// disagree about what "中" means.
 const cases = [
   [{ sizing: "fixed", size: "sm" }, { width: "min(860px, 94vw)", height: "min(560px, 90vh)" }],
   [{ sizing: "fixed", size: "md" }, { width: "min(1100px, 94vw)", height: "min(720px, 90vh)" }],

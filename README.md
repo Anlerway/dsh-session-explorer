@@ -13,16 +13,25 @@ native DSH session store — **without ever touching the physical layout of `~/.
 > Workspaces and folders are listed beside sessions, can be renamed the same three ways
 > and are reachable through the search box.
 >
-> The panel surface has two presenters: the plugin's own floating card (the default — a
-> file manager is a window, not a dialog) and, opt-in, DSH's `Modal` used headless so the
-> app owns the mask, focus trap and Escape. Every confirmation and prompt is a DSH dialog
-> regardless — no `window.confirm`, no `window.prompt` (which Electron disables outright),
-> with `RiskConfirmation` for operations that cannot be undone. Size can be a fixed pixel
-> preset or a percentage of the viewport.
+> There is **one** panel surface: the plugin's own floating card (浮窗), sized by a fixed
+> pixel preset or a percentage of the viewport. Every confirmation and prompt is drawn by
+> the plugin itself on a layer *above* the panel — no `window.confirm`, no `window.prompt`
+> (which Electron disables outright), and no DSH `Modal`. That last part is deliberate:
+> DSH's dialog primitive paints at the app's dialog tier (z-index 1000), which is below
+> this panel, so confirmations raised through it appeared *underneath* the window that
+> opened them.
 >
-> The standalone Electron component is gone: it duplicated a runtime (it could borrow
-> `dsh-orb`'s, or download its own) for a separate window that never shipped. This is a
-> pure web plugin with no runtime preference to configure.
+> The list separates the three kinds of container it can show: 特殊文件夹
+> (未分组 / 收藏 / 待办 — fixed views, never renamed or deleted), 文件夹 (the user's own),
+> and 工作区 (DSH's registry). Folders come before workspaces.
+>
+> 独立窗口 — a real browser window outside DSH — is **P6**, not a sliding in-app panel: it
+> needs the Electron component from §5.6 of `实现粗规划.md`. The setting names it and
+> states it is unavailable rather than silently falling back.
+>
+> The standalone Electron component (and its "reuse dsh-orb's runtime" switch) is gone for
+> now: it duplicated a runtime for a window that has not shipped. This build is a pure web
+> plugin with no runtime preference to configure.
 
 ## Shape
 
@@ -65,7 +74,7 @@ Layout created at boot:
 .dsh-session-explorer/
   tree.v1.json         virtual folders, placements, workspace/session order
   annotations.v1.json  per-session tags, note, priority, favorite/todo, tag library
-  settings.v1.json     shell preferences (open mode, presenter, size) and the current data directory
+  settings.v1.json     shell preferences (window mode, size, scrim) and the current data directory
   .tmp/                scratch space for atomic writes, emptied on every start
   trash/               the bin: index.v1.json + one payload directory per session
 ```
@@ -117,7 +126,7 @@ and the client reloads instead of clobbering.
 | Slot | What it renders |
 |---|---|
 | `sidebar.footer.action` | The explorer entry and its portal panel |
-| `settings.section` | The settings page: open mode, panel presenter, size/dim, data directory |
+| `settings.section` | The settings page: window mode, size/dim, data directory |
 
 Both labels are locale-bound thunks, so switching the app language re-renders them.
 
@@ -125,24 +134,31 @@ Both labels are locale-bound thunks, so switching the app language re-renders th
 
 ```bash
 npm test        # node --test: tree, store, settings, data-directory, trash and session suites
-npm run smoke   # render every client component against a stub React, twice
+npm run smoke   # render every client component against a stub React
 ```
 
 The suites run against temporary directories (`mkdtemp`) and hand-written `paths` objects,
 so they never touch `~/.dsh` or the real sidecars.
 
-`npm run smoke` loads the real client bundle and renders every component once. It runs
-twice: once with `@deepseek-ai/dsh-client-ui-primitives` available and once without, which
-is what pins down the two presentations the plugin must support — DSH's own `Modal` /
-`RiskConfirmation` when the host exposes them, and the local dialogs when it does not. It
-also asserts that the client's sizing helper agrees with `modalSizeOf` on the host, since
-the bundle cannot import a host module.
+`npm run smoke` loads the real client bundle and renders every component once against a
+stub React. Because the plugin requires nothing but `react`, the harness's `require` shim
+throws on any other module: if the bundle ever starts depending on the UI primitives
+again, the run fails instead of silently drifting.
 
-Three UI regressions are pinned in the same harness because they were invisible to the
-host tests: a folder under the current scope must appear in the *list* (not only in the
-tree) and must be findable by name from the search box; a workspace must describe itself
-as 工作区 in the detail pane and never as 文件夹; and `presenterOf` must return the floating
-card by default, the native modal only when asked for *and* available.
+The UI regressions pinned there were all invisible to the host tests:
+
+- a folder under the current scope must appear in the *list* (not only in the tree) and
+  must be findable by name from the search box;
+- 特殊文件夹 must be listed as 未分组 / 收藏 / 待办 with their own group caption, must not
+  include 根目录 (you are already in it), and must render neither a checkbox nor a rename
+  pencil;
+- 文件夹 must come before 工作区, and the two must be separate groups;
+- a workspace must describe itself as 工作区 in the detail pane and never as 文件夹;
+- every dialog must be the plugin's own `.fmodal` layer, never the removed native frame;
+- the bundle must render no `data-hosted` / `data-mode` surface switcher.
+
+The harness also asserts that the client's sizing helper agrees with `modalSizeOf` on the
+host, since the bundle cannot import a host module.
 
 ## Theming
 

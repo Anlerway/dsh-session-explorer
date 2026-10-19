@@ -10,22 +10,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  DETACHED_AVAILABLE,
   MAX_DIM,
   MODAL_FIXED_SIZES,
   MODAL_PERCENT_SIZES,
-  MODAL_PRESENTATIONS,
   MODAL_SIZING,
+  OPEN_MODE_DETACHED,
   OPEN_MODES,
   defaultSettings,
   mergeSettings,
   modalSizeOf,
+  normalizeBounds,
   normalizeSettings,
 } from "../lib/domain/settings.js";
 
-test("defaults keep the panel plain: modal, fixed medium, no scrim", () => {
+test("defaults keep the panel plain: 浮窗, fixed medium, no scrim", () => {
   const settings = defaultSettings();
-  assert.equal(settings.shell.openMode, "modal");
-  assert.equal(settings.shell.modal.presentation, "float");
+  assert.equal(settings.shell.openMode, "float");
   assert.equal(settings.shell.modal.sizing, "fixed");
   assert.equal(settings.shell.modal.size, "md");
   assert.equal(settings.shell.modal.percent, "p70");
@@ -33,9 +34,12 @@ test("defaults keep the panel plain: modal, fixed medium, no scrim", () => {
   assert.equal(settings.shell.modal.dim, 0);
   assert.equal(settings.shell.modal.closeOnBackdrop, true);
   assert.equal(settings.shell.window.alwaysOnTop, false);
+  assert.equal(settings.shell.window.bounds, null);
   // The Electron component (and its "reuse dsh-orb's runtime" flag) is gone:
   // the plugin is a pure web plugin now and stores no runtime preference.
   assert.equal("component" in settings, false);
+  // The retired "native modal" axis is gone too: it lived on shell.modal.
+  assert.equal("presentation" in settings.shell.modal, false);
   assert.equal(settings.dataDir.current, null);
 });
 
@@ -46,24 +50,26 @@ test("normalizeSettings always returns a complete document", () => {
   assert.deepEqual(normalizeSettings("nonsense"), defaultSettings());
 });
 
-test("open modes, sizing modes and presets are closed vocabularies", () => {
-  for (const mode of OPEN_MODES) {
-    assert.equal(normalizeSettings({ shell: { openMode: mode } }).shell.openMode, mode);
-  }
-  assert.equal(normalizeSettings({ shell: { openMode: "detached-window" } }).shell.openMode, "modal");
-  // The abandoned separate-window mode degrades to the in-app modal instead of
-  // leaving a stored setting the UI can no longer open.
-  assert.equal(normalizeSettings({ shell: { openMode: "detached" } }).shell.openMode, "modal");
+test("浮窗 is the only live open mode", () => {
+  assert.deepEqual([...OPEN_MODES], ["float"]);
+  // 独立窗口 is planned (P6) but not available in this build.
+  assert.equal(DETACHED_AVAILABLE, false);
+  assert.equal(OPEN_MODE_DETACHED, "window");
 
+  // Every retired vocabulary lands on 浮窗 rather than on a mode the panel
+  // cannot paint: "modal" was the old name for it, "detached" the separate
+  // browser window, "detached-window" a typo a user could have stored.
+  for (const legacy of ["modal", "detached", "detached-window", "nonsense"]) {
+    assert.equal(normalizeSettings({ shell: { openMode: legacy } }).shell.openMode, "float");
+  }
+  assert.equal(normalizeSettings({ shell: { openMode: "float" } }).shell.openMode, "float");
+});
+
+test("sizing modes and presets are closed vocabularies", () => {
   for (const sizing of MODAL_SIZING) {
     assert.equal(normalizeSettings({ shell: { modal: { sizing } } }).shell.modal.sizing, sizing);
   }
   assert.equal(normalizeSettings({ shell: { modal: { sizing: "auto" } } }).shell.modal.sizing, "fixed");
-
-  for (const presentation of MODAL_PRESENTATIONS) {
-    assert.equal(normalizeSettings({ shell: { modal: { presentation } } }).shell.modal.presentation, presentation);
-  }
-  assert.equal(normalizeSettings({ shell: { modal: { presentation: "dialog" } } }).shell.modal.presentation, "float");
 
   for (const size of MODAL_FIXED_SIZES) {
     assert.equal(normalizeSettings({ shell: { modal: { size } } }).shell.modal.size, size);
@@ -92,6 +98,19 @@ test("the scrim is clamped to [0, MAX_DIM]", () => {
   assert.equal(MAX_DIM, 0.8);
 });
 
+test("remembered window bounds are validated, not echoed", () => {
+  const good = normalizeBounds({ left: 10.4, top: 20.6, width: 900, height: 600 });
+  assert.deepEqual(good, { left: 10, top: 21, width: 900, height: 600 });
+  // Unusable shapes fall back to null instead of reaching the DOM as a style.
+  assert.equal(normalizeBounds(null), null);
+  assert.equal(normalizeBounds({}), null);
+  assert.equal(normalizeBounds({ left: 0, top: 0, width: 10, height: 10 }), null);
+  assert.equal(normalizeBounds({ left: "x", top: 0, width: 900, height: 600 }), null);
+  assert.equal(normalizeSettings({ shell: { window: { bounds: good } } }).shell.window.bounds.left, 10);
+  // Bounds used to live on shell.modal.bounds; they are folded over.
+  assert.equal(normalizeSettings({ shell: { modal: { bounds: good } } }).shell.window.bounds.width, 900);
+});
+
 test("pageSize and defaultView fall back instead of echoing junk", () => {
   assert.equal(normalizeSettings({ pageSize: 500 }).pageSize, 500);
   assert.equal(normalizeSettings({ pageSize: 19 }).pageSize, 200);
@@ -99,6 +118,9 @@ test("pageSize and defaultView fall back instead of echoing junk", () => {
   assert.equal(normalizeSettings({ pageSize: "big" }).pageSize, 200);
   assert.equal(normalizeSettings({ defaultView: "icons" }).defaultView, "icons");
   assert.equal(normalizeSettings({ defaultView: "tree" }).defaultView, "details");
+  // The list view was removed, so a stored one falls back rather than selecting
+  // a view the client no longer renders.
+  assert.equal(normalizeSettings({ defaultView: "list" }).defaultView, "details");
 });
 
 test("a data directory is only remembered when it is a non-empty string", () => {
@@ -117,7 +139,7 @@ test("mergeSettings keeps known keys and drops unknown ones", () => {
   assert.equal(merged.shell.modal.dim, 0.2);
   // Sibling keys survive a partial nested patch.
   assert.equal(merged.shell.modal.size, "md");
-  assert.equal(merged.shell.openMode, "modal");
+  assert.equal(merged.shell.openMode, "float");
   assert.equal("nonsense" in merged, false);
 });
 
