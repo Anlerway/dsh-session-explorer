@@ -22,10 +22,11 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ELECTRON_VERSION, componentPaths } from "../lib/component/layout.js";
+import { ELECTRON_VERSION, componentPaths, runtimePaths } from "../lib/component/layout.js";
 import { downloadAsset } from "../lib/component/downloader.js";
-import { sameDigest, sha256File, publishRuntime, verifyZip } from "../lib/component/install.js";
+import { sameDigest, sha256File, publishRuntime, removeTree, verifyZip } from "../lib/component/install.js";
 import { emptyState, normalizeState, readState, writeState, createProgressWriter } from "../lib/component/state.js";
+import { createComponentManager } from "../lib/component/manager.js";
 
 async function sandbox() {
   const root = await mkdtemp(join(tmpdir(), "se-component-"));
@@ -38,6 +39,11 @@ test("componentPaths derives every path from the data directory", () => {
   const dataDir = join(tmpdir(), "se-component");
   const paths = componentPaths(dataDir, "win32");
   assert.equal(paths.root, join(dataDir, "component"));
+  // A stamped runtime is a sibling, never the same directory: an install must
+  // never have to rename over a path Windows may have open.
+  const stamped = componentPaths(dataDir, "win32", "k3f9");
+  assert.notEqual(stamped.runtime, paths.runtime);
+  assert.ok(stamped.runtime.endsWith("runtime-k3f9"));
   assert.ok(paths.marker.endsWith(`.complete-${ELECTRON_VERSION}`));
   assert.ok(paths.part.endsWith("electron-v44.0.0-win32-x64.zip.part"));
   assert.ok(paths.binary.endsWith("electron.exe"));
