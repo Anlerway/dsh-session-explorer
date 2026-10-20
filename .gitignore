@@ -1,0 +1,18 @@
+# Dependencies are never installed into this repo: the plugin has none.
+node_modules/
+
+# Scratch space. Anything that is not the plugin itself belongs outside the
+# repository (see ../project_old for the archived material).
+temp/
+tmp/
+*.log
+
+# Editor and OS noise.
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# The plugin's own sidecar data directory, when someone points DSH_SE_DATA_DIR
+# at the checkout while debugging.
+.dsh-session-explorer/

@@ -226,11 +226,6 @@ test("favorite and todo are independent flags", () => {
   assert.deepEqual(idsWithFlag(document, "todo"), ["s1"]);
 });
 
-test("an unknown priority degrades to none", () => {
-  assert.equal(normalizeAnnotation({ priority: "urgent" }).priority, "none");
-  assert.equal(normalizeAnnotation({ priority: "HIGH" }).priority, "high");
-});
-
 test("the tag index counts distinct sessions per tag, most used first", () => {
   const document = {
     sessions: {

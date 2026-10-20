@@ -10,13 +10,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  DETACHED_AVAILABLE,
   MAX_DIM,
   MODAL_FIXED_SIZES,
   MODAL_PERCENT_SIZES,
   MODAL_SIZING,
-  OPEN_MODE_DETACHED,
-  OPEN_MODES,
   defaultSettings,
   mergeSettings,
   modalSizeOf,
@@ -26,7 +23,6 @@ import {
 
 test("defaults keep the panel plain: 浮窗, fixed medium, no scrim", () => {
   const settings = defaultSettings();
-  assert.equal(settings.shell.openMode, "float");
   assert.equal(settings.shell.modal.sizing, "fixed");
   assert.equal(settings.shell.modal.size, "md");
   assert.equal(settings.shell.modal.percent, "p70");
@@ -35,9 +31,12 @@ test("defaults keep the panel plain: 浮窗, fixed medium, no scrim", () => {
   assert.equal(settings.shell.modal.closeOnBackdrop, true);
   assert.equal(settings.shell.window.alwaysOnTop, false);
   assert.equal(settings.shell.window.bounds, null);
-  // The Electron component (and its "reuse dsh-orb's runtime" flag) is gone:
-  // the plugin is a pure web plugin now and stores no runtime preference.
+  // The plugin stores no runtime preference: the browser component is not
+  // shared with, or adopted from, any other plugin.
   assert.equal("component" in settings, false);
+  // 独立窗口 is opened from the titlebar, not from a setting, so the document
+  // carries no presentation mode at all.
+  assert.equal("openMode" in settings.shell, false);
   // The retired "native modal" axis is gone too: it lived on shell.modal.
   assert.equal("presentation" in settings.shell.modal, false);
   assert.equal(settings.dataDir.current, null);
@@ -50,19 +49,13 @@ test("normalizeSettings always returns a complete document", () => {
   assert.deepEqual(normalizeSettings("nonsense"), defaultSettings());
 });
 
-test("浮窗 is the only live open mode", () => {
-  assert.deepEqual([...OPEN_MODES], ["float"]);
-  // 独立窗口 is planned (P6) but not available in this build.
-  assert.equal(DETACHED_AVAILABLE, false);
-  assert.equal(OPEN_MODE_DETACHED, "window");
-
-  // Every retired vocabulary lands on 浮窗 rather than on a mode the panel
-  // cannot paint: "modal" was the old name for it, "detached" the separate
-  // browser window, "detached-window" a typo a user could have stored.
-  for (const legacy of ["modal", "detached", "detached-window", "nonsense"]) {
-    assert.equal(normalizeSettings({ shell: { openMode: legacy } }).shell.openMode, "float");
+test("a retired open mode is dropped instead of being echoed back", () => {
+  // 独立窗口 used to be a setting. It is not any more: the panel is always the
+  // floating card, and a detached window is opened from the titlebar. A stored
+  // mode from an earlier build must not survive normalisation.
+  for (const legacy of ["modal", "detached", "detached-window", "window", "float", "nonsense"]) {
+    assert.equal("openMode" in normalizeSettings({ shell: { openMode: legacy } }).shell, false);
   }
-  assert.equal(normalizeSettings({ shell: { openMode: "float" } }).shell.openMode, "float");
 });
 
 test("sizing modes and presets are closed vocabularies", () => {
@@ -111,18 +104,6 @@ test("remembered window bounds are validated, not echoed", () => {
   assert.equal(normalizeSettings({ shell: { modal: { bounds: good } } }).shell.window.bounds.width, 900);
 });
 
-test("pageSize and defaultView fall back instead of echoing junk", () => {
-  assert.equal(normalizeSettings({ pageSize: 500 }).pageSize, 500);
-  assert.equal(normalizeSettings({ pageSize: 19 }).pageSize, 200);
-  assert.equal(normalizeSettings({ pageSize: 2001 }).pageSize, 200);
-  assert.equal(normalizeSettings({ pageSize: "big" }).pageSize, 200);
-  assert.equal(normalizeSettings({ defaultView: "icons" }).defaultView, "icons");
-  assert.equal(normalizeSettings({ defaultView: "tree" }).defaultView, "details");
-  // The list view was removed, so a stored one falls back rather than selecting
-  // a view the client no longer renders.
-  assert.equal(normalizeSettings({ defaultView: "list" }).defaultView, "details");
-});
-
 test("a data directory is only remembered when it is a non-empty string", () => {
   assert.equal(normalizeSettings({ dataDir: { current: "C:/tmp/se" } }).dataDir.current, "C:/tmp/se");
   assert.equal(normalizeSettings({ dataDir: { current: "   " } }).dataDir.current, null);
@@ -131,22 +112,19 @@ test("a data directory is only remembered when it is a non-empty string", () => 
 
 test("mergeSettings keeps known keys and drops unknown ones", () => {
   const merged = mergeSettings(defaultSettings(), {
-    pageSize: 500,
     nonsense: true,
     shell: { modal: { dim: 0.2 } },
   });
-  assert.equal(merged.pageSize, 500);
   assert.equal(merged.shell.modal.dim, 0.2);
   // Sibling keys survive a partial nested patch.
   assert.equal(merged.shell.modal.size, "md");
-  assert.equal(merged.shell.openMode, "float");
   assert.equal("nonsense" in merged, false);
 });
 
 test("mergeSettings does not mutate the document it was given", () => {
   const base = defaultSettings();
   const before = JSON.stringify(base);
-  mergeSettings(base, { shell: { openMode: "window", modal: { dim: 0.4 } } });
+  mergeSettings(base, { shell: { modal: { dim: 0.4 } } });
   assert.equal(JSON.stringify(base), before);
 });
 

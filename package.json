@@ -1,16 +1,14 @@
 {
   "name": "dsh-session-explorer",
   "version": "0.1.0",
-  "description": "会话资源管理器 (Session resource manager) for DeepSeek Harness: virtual folders, tags, notes, priority, trash and multi-workspace session browsing on top of the native DSH session store.",
+  "description": "会话资源管理器 (Session resource manager) for DeepSeek Harness: virtual folders, tags, notes, trash and multi-workspace session browsing on top of the native DSH session store.",
   "type": "module",
   "engines": {
     "node": "^22.15.0 || >=24.0.0"
   },
   "main": "./lib/index.js",
   "scripts": {
-    "test": "node --test test/tree.test.mjs test/store.test.mjs test/settings.test.mjs test/datadir.test.mjs test/trash.test.mjs test/sessions.test.mjs test/move.test.mjs test/component.test.mjs",
-    "smoke": "node test/render-smoke.mjs",
-    "selftest": "node test/selftest.mjs"
+    "test": "node --test test/*.test.mjs"
   },
   "exports": {
     ".": "./lib/index.js",

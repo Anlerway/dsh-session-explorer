@@ -1,14 +1,19 @@
 /**
  * dsh-session-explorer — detached window page.
  *
- * The same UI as the in-app panel, hosted in a real OS window. It is loaded by
- * the helper's `loadFile`, so it has no access to DSH's page context: every
- * read and write goes through `window.se.api`, which proxies to the Host with
- * the helper token attached in the main process.
+ * A **read-only overview**, not a second copy of the panel. The two surfaces are
+ * deliberately different: the in-app floating card (lib/client.js) is the full
+ * explorer — rename, trash, tags, drag-and-drop, tabs — while this page exists
+ * so a session list can live in its own OS window next to whatever else you are
+ * doing. Everything here is a summary: workspaces, recent sessions, sizes.
  *
- * The page deliberately does not re-implement the explorer. It renders the
- * plugin's own client bundle, handed to it by the Host over the API, so the two
- * surfaces can never drift.
+ * It is loaded by the helper's `loadFile`, so it has no access to DSH's page
+ * context: every read goes through `window.se.api`, which proxies to the Host
+ * with the helper token attached in the main process. The token never reaches
+ * this file.
+ *
+ * If the full explorer is ever wanted here, mount lib/client.js in standalone
+ * mode instead of growing this file — do not re-implement features one by one.
  */
 
 (() => {
@@ -62,7 +67,7 @@
     const workspaces = data?.workspaces?.workspaces ?? [];
     host.innerHTML = `
       <div class="bar">
-        <span class="title">会话资源管理器</span>
+        <span class="title">会话资源管理器 · 概览</span>
         <span class="spacer"></span>
         <span class="meta">${sessions.length} 个会话 · ${workspaces.length} 个工作区</span>
         <button class="wbtn" data-win="minimize" title="最小化">─</button>
@@ -91,7 +96,7 @@
           </section>
         </div>
         <div class="foot">
-          <span>独立窗口 · 数据来自 DSH 本机会话库</span>
+          <span>独立窗口（只读概览）· 数据来自 DSH 本机会话库</span>
           <span class="spacer"></span>
           <button id="refresh" class="act">刷新</button>
         </div>

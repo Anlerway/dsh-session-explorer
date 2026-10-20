@@ -1,37 +1,25 @@
 # dsh-session-explorer (会话资源管理器)
 
 A resource-manager-style session browser for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness):
-virtual folders, tags, notes, priority, trash and multi-workspace browsing on top of the
-native DSH session store — **without ever touching the physical layout of `~/.dsh`**.
+virtual folders, tags, notes, trash and multi-workspace browsing on top of the native DSH
+session store — **without ever touching the physical layout of `~/.dsh`**.
 
-> Status: **P0–P4 complete, P4.1 polish in** — the plugin loads, the sidebar entry opens a
-> three-pane explorer over the real session store, and the sidecar data directory is
-> created. Sessions can be renamed (from the toolbar, F2, the row context menu or the
-> detail title), archived, pinned, forked, moved, tagged, noted, filtered and trashed;
-> deleting moves the payload into a real bin under the data directory, from which it can
-> be restored or purged, and every destructive step can be undone with Ctrl+Z.
-> Workspaces and folders are listed beside sessions, can be renamed the same three ways
-> and are reachable through the search box.
+> **Status: feature-complete for the floating panel.** Sessions can be renamed, archived,
+> pinned, forked, moved, tagged, noted, filtered and trashed; folders nest and can be
+> dragged; deleting moves the payload into a real bin from which it can be restored or
+> purged; cross-workspace cut/copy/paste re-homes the artifact and swaps registry
+> accounting. The panel has tabs, a resizable three-pane layout, inline rename and a
+> command bar.
 >
-> There is **one** panel surface: the plugin's own floating card (浮窗), sized by a fixed
-> pixel preset or a percentage of the viewport. Every confirmation and prompt is drawn by
-> the plugin itself on a layer *above* the panel — no `window.confirm`, no `window.prompt`
-> (which Electron disables outright), and no DSH `Modal`. That last part is deliberate:
-> DSH's dialog primitive paints at the app's dialog tier (z-index 1000), which is below
-> this panel, so confirmations raised through it appeared *underneath* the window that
-> opened them.
+> Two surfaces exist and they are deliberately different:
 >
-> The list separates the three kinds of container it can show: 特殊文件夹
-> (未分组 / 收藏 / 待办 — fixed views, never renamed or deleted), 文件夹 (the user's own),
-> and 工作区 (DSH's registry). Folders come before workspaces.
+> | Surface | What it is |
+> |---|---|
+> | **浮窗** (`lib/client.js`) | The full explorer. Opened from the sidebar entry. |
+> | **独立窗口** (`assets/detached/`) | A **read-only overview** in its own OS window, powered by an optionally-downloaded Electron component. |
 >
-> 独立窗口 — a real browser window outside DSH — is **P6**, not a sliding in-app panel: it
-> needs the Electron component from §5.6 of `实现粗规划.md`. The setting names it and
-> states it is unavailable rather than silently falling back.
->
-> The standalone Electron component (and its "reuse dsh-orb's runtime" switch) is gone for
-> now: it duplicated a runtime for a window that has not shipped. This build is a pure web
-> plugin with no runtime preference to configure.
+> 导出会话 (export to Markdown / JSONL) is the one planned feature that is not built yet;
+> the button says so instead of failing silently.
 
 ## Shape
 
@@ -45,6 +33,23 @@ Zero runtime dependencies. A DSH plugin is one bundle row with two halves:
 The Host half registers a single `/session-explorer/api` prefix route on the DSH web
 server; the Client half registers one `sidebar.footer.action` slot and portals its panel
 into a fixed layer on `<body>`.
+
+```
+lib/
+  index.js            route table, dispatch, error mapping
+  client.js           the whole panel (single file, no build)
+  constants.js        API prefix, plugin id, fixed node ids
+  http.js             {ok,result} / {ok,error,code} envelopes
+  capabilities.js     defensive service probe
+  paths.js            data-directory resolution (env → settings → .location)
+  domain/             pure rules: tree, folders, sessions, annotations, settings, trash
+  sources/            read pipeline: headers, projection cache, artifacts, registry
+  store/              sidecar documents with atomic writes and revisions
+  host/               actions, trash, move, datadir
+  component/          browser-component state machine, downloader, installer
+  detached/           Electron helper: launcher, main process, preload
+assets/detached/      the overview page loaded inside the helper window
+```
 
 ## Install (local, out-of-tree)
 
@@ -68,15 +73,16 @@ Electron app, so `dsh profile` cannot rebuild it either. A **Client-side** chang
 All sidecar state lives in `~/.dsh-session-explorer/` — a **sibling** of `~/.dsh`, never a
 child of it, so uninstalling the plugin is `rm -rf` on one directory and nothing else.
 
-Layout created at boot:
-
 ```
 .dsh-session-explorer/
   tree.v1.json         virtual folders, placements, workspace/session order
-  annotations.v1.json  per-session tags, note, priority, favorite/todo, tag library
-  settings.v1.json     shell preferences (window mode, size, scrim) and the current data directory
+  annotations.v1.json  per-session tags, note, favorite/todo flags, tag library
+  settings.v1.json     panel size, scrim, current data directory
+  .location            pointer left behind in a directory the user migrated away from
   .tmp/                scratch space for atomic writes, emptied on every start
   trash/               the bin: index.v1.json + one payload directory per session
+  component/           the optional Electron runtime for 独立窗口
+  detached/            window geometry and the helper's Chromium profile
 ```
 
 The location is resolved in three steps, in this order:
@@ -104,18 +110,19 @@ Everything answers with one of two envelopes:
 | Route | Purpose |
 |---|---|
 | `GET /bootstrap` | Everything the panel needs in one round trip: workspaces, sessions, trashed, tree, tags, tag library, settings, revisions, stats |
-| `GET /sessions`, `GET /sessions/by-node` | Sessions, optionally filtered by `q`/`tag`/`flag`, or restricted to one tree node |
-| `GET /tree` | A freshly derived tree without re-reading session data |
 | `GET /tags`, `POST /tags`, `DELETE /tags/:tag` | The shared tag library |
-| `PATCH /annotations/:id` | Tags, note, priority, favorite, todo for one session |
+| `PATCH /annotations/:id` | Tags, note, favorite, todo for one session |
 | `POST /folders`, `PATCH /folders/:id`, `DELETE /folders/:id` | Virtual folders (`?lift=0` deletes the contents too) |
 | `POST /nodes/:id/move`, `POST /nodes/:id/order` | Reparent or reorder a folder/workspace node |
 | `GET /settings`, `PUT /settings` | Preferences; `PUT` takes a partial document and drops unknown keys |
 | `POST /sessions/:id/rename` | DSH's own rename — appends a `session/title` event, no sidecar write |
 | `POST /workspaces/:id/rename` | Rename a workspace through the registry |
 | `POST /sessions/:id/archive`, `/unarchive`, `/pin`, `/unpin`, `/fork` | Native lifecycle operations |
+| `POST /move` | Cross-workspace move or copy |
 | `POST /trash`, `POST /restore`, `POST /purge`, `POST /trash/empty` | The bin: move the payload out, put it back, delete it for good, empty it |
 | `GET /datadir`, `POST /datadir/inspect`, `POST /datadir/migrate` | Describe, pre-flight and perform the data-directory move |
+| `GET /component/status`, `/component/events` (SSE), `POST /component/{install,cancel,remove,retry}` | The optional browser component |
+| `POST /detached/{open,focus,close}` | The detached window |
 
 Mutating routes accept an expected revision through `If-Match` or a `revision` field in the
 body; omitting both means last-writer-wins. A stale revision answers `409 revision-conflict`
@@ -126,45 +133,43 @@ and the client reloads instead of clobbering.
 | Slot | What it renders |
 |---|---|
 | `sidebar.footer.action` | The explorer entry and its portal panel |
-| `settings.section` | The settings page: window mode, size/dim, data directory |
+| `settings.section` | The settings page: panel size, scrim, browser component, data directory |
 
 Both labels are locale-bound thunks, so switching the app language re-renders them.
 
-## Tests
+## The browser component (独立窗口)
 
-```bash
-npm test        # node --test: tree, store, settings, data-directory, trash and session suites
-npm run smoke   # render every client component against a stub React
-```
+DSH denies `window.open` and exposes no `BrowserWindow` to plugins, so a real OS window
+needs its own runtime. The plugin downloads Electron 44.0.0 explicitly — it is never
+fetched implicitly, because the floating panel is fully usable without it and a silent
+150 MB download that fails would read as "the plugin is broken".
 
-The suites run against temporary directories (`mkdtemp`) and hand-written `paths` objects,
-so they never touch `~/.dsh` or the real sidecars.
+The state machine is `absent → downloading → verifying → extracting → ready`, persisted in
+`component/state.v1.json`. Downloads stream with `Range` resume across four mirrors, the
+sha256 is checked **before** extraction, and the extracted tree is published by rename so a
+failed install never destroys a working one. Removing the component deletes its marker
+first: whatever survives a locked file is then provably not a usable runtime.
 
-`npm run smoke` loads the real client bundle and renders every component once against a
-stub React. Because the plugin requires nothing but `react`, the harness's `require` shim
-throws on any other module: if the bundle ever starts depending on the UI primitives
-again, the run fails instead of silently drifting.
+## Search
 
-The UI regressions pinned there were all invisible to the host tests:
-
-- a folder under the current scope must appear in the *list* (not only in the tree) and
-  must be findable by name from the search box;
-- 特殊文件夹 must be listed as 未分组 / 收藏 / 待办 with their own group caption, must not
-  include 根目录 (you are already in it), and must render neither a checkbox nor a rename
-  pencil;
-- 文件夹 must come before 工作区, and the two must be separate groups;
-- a workspace must describe itself as 工作区 in the detail pane and never as 文件夹;
-- every dialog must be the plugin's own `.fmodal` layer, never the removed native frame;
-- the bundle must render no `data-hosted` / `data-mode` surface switcher.
-
-The harness also asserts that the client's sizing helper agrees with `modalSizeOf` on the
-host, since the bundle cannot import a host module.
+The search box matches the **title, the note and the tags** of a session — the things the
+plugin itself owns. It does not read session logs: a full-text search over multi-megabyte
+zstd frame streams is a different product, and DSH's own UI is the place for that.
 
 ## Theming
 
 The panel never hard-codes a colour. Every colour is a DSH alias token
 (`--dsw-alias-bg-layer-1`, `--dsw-alias-border-l2`, `--dsw-alias-label-primary`, …), which
 is what makes it follow the app's light/dark theme and any wallpaper tint automatically.
+
+## Tests
+
+```bash
+npm test        # node --test: tree, store, settings, data-directory, trash, sessions, move, component
+```
+
+The suites run against temporary directories (`mkdtemp`) and hand-written `paths` objects,
+so they never touch `~/.dsh` or the real sidecars.
 
 ## License
 
