@@ -7,6 +7,9 @@ temp/
 tmp/
 *.log
 
+# dsh-ops drops a lock file next to every file it touches; they are not ours.
+.dsh-ops-update-*.lock
+
 # Editor and OS noise.
 .DS_Store
 Thumbs.db

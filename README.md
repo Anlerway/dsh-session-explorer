@@ -16,7 +16,7 @@ session store — **without ever touching the physical layout of `~/.dsh`**.
 > | Surface | What it is |
 > |---|---|
 > | **浮窗** (`lib/client.js`) | The full explorer. Opened from the sidebar entry. |
-> | **独立窗口** (`assets/detached/`) | A **read-only overview** in its own OS window, powered by an optionally-downloaded Electron component. |
+> | **独立窗口** | The **same panel**, in its own OS window. The window loads the real DSH app (authenticated with a one-shot token) and the plugin opens its panel full-window there, so there is one explorer with two mounts — not two explorers. Falls back to a local read-only overview when the Host cannot mint an authenticated URL. |
 >
 > 导出会话 (export to Markdown / JSONL) is the one planned feature that is not built yet;
 > the button says so instead of failing silently.
@@ -123,6 +123,10 @@ Everything answers with one of two envelopes:
 | `GET /datadir`, `POST /datadir/inspect`, `POST /datadir/migrate` | Describe, pre-flight and perform the data-directory move |
 | `GET /component/status`, `/component/events` (SSE), `POST /component/{install,cancel,remove,retry}` | The optional browser component |
 | `POST /detached/{open,focus,close}` | The detached window |
+
+In the detached window the panel is the whole page: it opens on mount, fills the
+viewport, has no scrim, hides the 独立窗口 button, and its close button closes the
+window. Escape does not dismiss it (there would be nothing behind it).
 
 Mutating routes accept an expected revision through `If-Match` or a `revision` field in the
 body; omitting both means last-writer-wins. A stale revision answers `409 revision-conflict`
