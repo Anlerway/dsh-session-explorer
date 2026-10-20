@@ -4,12 +4,13 @@ A resource-manager-style session browser for [DeepSeek Harness](https://github.c
 virtual folders, tags, notes, trash and multi-workspace browsing on top of the native DSH
 session store — **without ever touching the physical layout of `~/.dsh`**.
 
-> **Status: feature-complete for the floating panel.** Sessions can be renamed, archived,
-> pinned, forked, moved, tagged, noted, filtered and trashed; folders nest and can be
-> dragged; deleting moves the payload into a real bin from which it can be restored or
-> purged; cross-workspace cut/copy/paste re-homes the artifact and swaps registry
-> accounting. The panel has tabs, a resizable three-pane layout, inline rename and a
-> command bar.
+> **Status: feature-complete for both surfaces.** Sessions can be renamed, archived,
+> pinned, forked, moved, tagged, noted, filtered, trashed and exported; folders nest and
+> can be dragged; deleting moves the payload into a real bin from which it can be restored
+> or purged; cross-workspace cut/copy/paste re-homes the artifact and swaps registry
+> accounting. Workspaces, folders and sessions share one 置顶 band, 收藏 and 待办 hold
+> shortcuts rather than copies, and the panel has tabs, a resizable three-pane layout,
+> inline rename and a command bar.
 >
 > Two surfaces exist and they are deliberately different:
 >
@@ -18,8 +19,9 @@ session store — **without ever touching the physical layout of `~/.dsh`**.
 > | **浮窗** (`lib/client.js`) | The full explorer. Opened from the sidebar entry. |
 > | **独立窗口** (`assets/detached/`) | The **same explorer UI**, ported class-for-class from `lib/client.js`, in its own frameless OS window. It does not load the DSH app: it is plain DOM (no React, no build step) talking to the same `/session-explorer/api` through the helper preload, which is the only thing holding the token. Same markup, same layout, same icons — only the host adapter differs. |
 >
-> 导出会话 (export to Markdown / JSONL) is the one planned feature that is not built yet;
-> the button says so instead of failing silently.
+> 导出会话 writes Markdown or JSONL through `GET /export`, from the detail pane or the
+> row menu. Text is the only media: attachments and binary tool output are described,
+> never inlined.
 
 ## Shape
 
@@ -42,10 +44,11 @@ lib/
   http.js             {ok,result} / {ok,error,code} envelopes
   capabilities.js     defensive service probe
   paths.js            data-directory resolution (env → settings → .location)
-  domain/             pure rules: tree, folders, sessions, annotations, settings, trash
+  domain/             pure rules: tree, folders, shortcuts, sessions, annotations,
+                      settings, trash, export
   sources/            read pipeline: headers, projection cache, artifacts, registry
   store/              sidecar documents with atomic writes and revisions
-  host/               actions, trash, move, datadir
+  host/               actions, trash, move, datadir, bridge, theme
   component/          browser-component state machine, downloader, installer
   detached/           Electron helper: launcher, main process, preload
 assets/detached/      the detached window's own page: index.html, shell.css, shell.js
@@ -75,7 +78,8 @@ child of it, so uninstalling the plugin is `rm -rf` on one directory and nothing
 
 ```
 .dsh-session-explorer/
-  tree.v1.json         virtual folders, placements, workspace/session order
+  tree.v1.json         virtual folders, placements, workspace/session order,
+                       shortcuts, container pins, virtual session placement
   annotations.v1.json  per-session tags, note, favorite/todo flags, tag library
   settings.v1.json     panel size, scrim, current data directory
   .location            pointer left behind in a directory the user migrated away from
@@ -114,6 +118,12 @@ Everything answers with one of two envelopes:
 | `PATCH /annotations/:id` | Tags, note, favorite, todo for one session |
 | `POST /folders`, `PATCH /folders/:id`, `DELETE /folders/:id` | Virtual folders (`?lift=0` deletes the contents too) |
 | `POST /nodes/:id/move`, `POST /nodes/:id/order` | Reparent or reorder a folder/workspace node |
+| `POST /nodes/:id/pin` | 置顶 a folder or a workspace (DSH pins sessions; this pins containers, and both land in one band) |
+| `POST /shortcuts`, `DELETE /shortcuts/:id` | 快捷方式: a reference to a folder, a workspace or a session. The target never moves |
+| `POST /sessions/placement` | Show sessions in another container without moving them (see below) |
+| `POST /workspaces/:id/delete`, `POST /workspaces/:id/reveal`, `POST /reveal-path` | Drop a workspace registration (files and sessions survive), reveal a workspace or any verified path in the OS file manager |
+| `GET /export?sessionId&format=md\|jsonl` | The session as a file. Answers with the body, not an envelope |
+| `GET /theme`, `POST /theme` | The 14 `--dsw-alias-*` tokens the panel can see, so the detached window can paint itself |
 | `GET /settings`, `PUT /settings` | Preferences; `PUT` takes a partial document and drops unknown keys |
 | `POST /sessions/:id/rename` | DSH's own rename — appends a `session/title` event, no sidecar write |
 | `POST /workspaces/:id/rename` | Rename a workspace through the registry |
@@ -129,6 +139,22 @@ Everything answers with one of two envelopes:
 Mutating routes accept an expected revision through `If-Match` or a `revision` field in the
 body; omitting both means last-writer-wins. A stale revision answers `409 revision-conflict`
 and the client reloads instead of clobbering.
+
+### Virtual session placement
+
+DSH derives a session's workspace from the `cwd` in its header, so the only way to
+physically re-home a session is to move its directory — which hard constraint 1 forbids.
+`sessionPlacement` in `tree.v1.json` is therefore a *grouping* override:
+
+```jsonc
+{ "sessionPlacement": { "<sessionId>": "f-ungrouped" } }
+```
+
+`POST /sessions/placement` `{ ids, parent }` writes it (`parent: ""` clears it), and
+`buildTree` / `sessionsOfNode` count and list a session by that node instead of its
+workspace. The session keeps its DSH workspace, its log and its directory; only the row
+moves — which is what makes 未分组 a real container without touching `sessions/`.
+A placement naming a node that no longer exists degrades to the session's own workspace.
 
 ### Slots
 
@@ -169,7 +195,14 @@ bridge included, so a change to the panel's look is a change to the window's loo
 What the window can do is the whole explorer minus the settings page: three panes with
 draggable dividers, tabs with per-tab history, breadcrumb, sorting, search, filters, batch
 selection, cut/copy/paste, drag-and-drop moves, inline rename, tags, notes, favorites, todos,
-pin, archive, fork, the bin, and Ctrl+Z for the destructive ones.
+pin, archive, fork, shortcuts, export, the bin, and Ctrl+Z for the destructive ones.
+
+**Theme.** A `file://` page cannot read the app's stylesheet, so every `--dsw-alias-*`
+token there would fall back to a hard-coded dark palette — a dark card in a light app.
+The panel therefore reads its own computed tokens (14 of them, a fixed list, not a CSS
+scrape) and posts them to `/theme`; the window asks for them on boot and on `focus` and
+writes them to its own `:root`. Values are validated by `isSafeTokenValue` before they
+reach a style attribute.
 
 ### The bridge (panel ↔ window)
 
@@ -198,6 +231,31 @@ replaying yesterday's "open session" after a restart would move the view unasked
 The panel keeps the id-copy fallback: with no panel listening (it is closed, or an older
 build), 打开 copies the session id and says so rather than pretending.
 
+Closing the window is a user decision, not a crash: `launcher.js` records it and never
+respawns on the helper's exit, so 关闭 stays closed until the user opens it again.
+
+## Navigation model
+
+Six fixed entries, every one of them with a live count. They are views over the same
+sessions, not copies of them:
+
+| Entry | Holds | Accepts a drop |
+|---|---|---|
+| 根目录 | The directory tree: folders, workspaces, and the sessions *placed* in them | Folders, workspaces |
+| 所有会话 | The flat list of every live session | — |
+| 未分组 | Real sessions that belong to no workspace node — including ones pulled out of a workspace by a virtual placement; folders may live here too | Sessions, folders, workspaces |
+| 回收站 | Trashed sessions only. The toolbar drops cut/copy/paste/rename/收藏/待办/置顶/归档/分叉: a bin can restore and delete, nothing else | — |
+| 待办 / 收藏 | **Shortcuts** to sessions, folders and workspaces. Dropping here creates a reference and never moves the target | Anything, as a shortcut |
+
+The default workspace is an ordinary workspace node — movable, renameable, pinnable and
+deletable — carrying only a `default` marker so the UI can still aim new sessions at it.
+置顶 is one band for sessions *and* containers: DSH stores the session pins,
+`tree.v1.json` stores the container pins, and the list shows them together.
+
+Right-clicking a row inside a multi-selection acts on the whole selection and offers only
+复制 / 剪切 / 粘贴 / 删除 — a bulk edit of tags or notes across unrelated rows would apply
+one row's values to all of them.
+
 ## Search
 
 The search box matches the **title, the note and the tags** of a session — the things the
@@ -210,10 +268,15 @@ The panel never hard-codes a colour. Every colour is a DSH alias token
 (`--dsw-alias-bg-layer-1`, `--dsw-alias-border-l2`, `--dsw-alias-label-primary`, …), which
 is what makes it follow the app's light/dark theme and any wallpaper tint automatically.
 
+No `backdrop-filter` and no darkening layer anywhere: with a wallpaper behind the panel,
+a blur would smear the image and a scrim would dim it (hard constraint 10). The scrim
+only paints when the user raises `settings.shell.modal.dim` above zero.
+
 ## Tests
 
 ```bash
-npm test              # node --test: tree, store, settings, data-directory, trash, sessions, move, component, detached window
+npm test              # node --test: tree, store, settings, data-directory, trash, sessions,
+                      # move, component, shortcuts, export, theme, detached window
 npm run test:render   # the floating panel, rendered against a stub React
 ```
 

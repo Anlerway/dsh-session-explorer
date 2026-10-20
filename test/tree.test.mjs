@@ -60,7 +60,7 @@ test("R1: workspaces hang directly off the root, never off each other", () => {
   assert.equal(tree.nodes[FIXED_NODES.trash].parent, null);
 });
 
-test("the default workspace is a real node inside the root", () => {
+test("the default workspace is an ordinary, movable workspace node", () => {
   const withDefault = {
     ...registry,
     defaultWorkspaceId: "wb",
@@ -68,20 +68,36 @@ test("the default workspace is a real node inside the root", () => {
   const tree = buildAutoTree({ registry: withDefault, sessions });
   const node = tree.nodes[workspaceNodeId("wb")];
   assert.equal(node.parent, FIXED_NODES.root);
-  assert.equal(node.kind, "default-workspace");
-  assert.equal(node.name, "默认工作区");
+  // 默认工作区 is now a normal workspace: no special kind means no special
+  // rename lock, no pinned position, and moving it is legal.
+  assert.equal(node.kind, "workspace");
+  assert.equal(node.name, "Beta");
   assert.equal(node.workspaceId, "wb");
-  // …and it is still an ordinary workspace container for counting purposes.
+  // The marker survives so the UI can still point new sessions at it.
+  assert.equal(node.default, true);
   assert.equal(tree.counts[workspaceNodeId("wb")], 1);
+  // …and it sorts with the other workspaces instead of jumping to the top.
+  const siblings = tree.children[FIXED_NODES.root];
+  assert.ok(siblings.indexOf(workspaceNodeId("wa")) < siblings.indexOf(workspaceNodeId("wb")));
 });
 
-test("R2+R3: every session is counted exactly once and counts sum to the total", () => {
+test("R2+R3: every session is counted exactly once on its own container", () => {
   const tree = buildAutoTree({ registry, sessions });
-  // 收藏 / 待办 are shortcut views, so they are not part of the container sum.
-  const shortcuts = new Set([FIXED_NODES.favorites, FIXED_NODES.todos]);
-  const containers = tree.children[FIXED_NODES.root].filter((id) => !shortcuts.has(id));
+  // 收藏 / 待办 are shortcut containers and 所有会话 mirrors the whole set, so
+  // neither takes part in the container sum. 未分组 owns the sessions that have
+  // no workspace; every workspace owns its own.
+  const excluded = new Set([FIXED_NODES.favorites, FIXED_NODES.todos, FIXED_NODES.all]);
+  const containers = tree.children[FIXED_NODES.root].filter(
+    (id) => !excluded.has(id) && (tree.nodes[id]?.type === "workspace" || id === FIXED_NODES.ungrouped),
+  );
   const sum = containers.reduce((total, id) => total + (tree.counts[id] ?? 0), 0);
   assert.equal(sum, sessions.length);
+  // 所有会话 mirrors the live set exactly.
+  assert.equal(tree.counts[FIXED_NODES.all], sessions.length);
+  // 根目录 aggregates the directory tree below it: with every workspace hanging
+  // off the root *and* 未分组 being a real container, that is every live
+  // session — but reached through the tree, not by counting sessions itself.
+  assert.equal(tree.counts[FIXED_NODES.root], sessions.length);
   assert.equal(tree.counts[workspaceNodeId("wa")], 2);
   assert.equal(tree.counts[workspaceNodeId("wb")], 1);
   assert.equal(tree.counts[FIXED_NODES.ungrouped], 1);
@@ -99,14 +115,69 @@ test("R4: favorites and todos mirror the plugin flags and are not part of the co
   assert.equal(tree2.counts[FIXED_NODES.favorites], 0);
 });
 
+test("scope: 所有会话 is the flat list, the root is the directory tree", () => {
+  const tree = buildAutoTree({ registry, sessions });
+  const view = { sessions };
+  assert.deepEqual(
+    sessionsOfNode(FIXED_NODES.all, view, tree).map((session) => session.id).sort(),
+    sessions.map((session) => session.id).sort(),
+  );
+  // The root lists the sessions of the workspaces below it; 未分组 is a sibling
+  // container, so its session is not part of the root's list.
+  assert.deepEqual(
+    sessionsOfNode(FIXED_NODES.root, view, tree).map((session) => session.id).sort(),
+    sessions.filter((session) => session.workspaceId).map((session) => session.id).sort(),
+  );
+  assert.deepEqual(
+    sessionsOfNode(FIXED_NODES.ungrouped, view, tree).map((session) => session.id),
+    ["s4"],
+  );
+});
+
 test("scope follows the selection", () => {
   const tree = buildAutoTree({ registry, sessions });
   const view = { sessions };
   const ids = (nodeId) => sessionsOfNode(nodeId, view, tree).map((s) => s.id);
-  assert.deepEqual(ids(FIXED_NODES.root), ["s1", "s2", "s3", "s4"]);
+  // 根目录 lists what lives in its directories; the flat list is 所有会话.
+  assert.deepEqual(ids(FIXED_NODES.root), ["s1", "s2", "s3"]);
+  assert.deepEqual(ids(FIXED_NODES.all), ["s1", "s2", "s3", "s4"]);
   assert.deepEqual(ids(workspaceNodeId("wa")), ["s1", "s2"]);
   assert.deepEqual(ids(FIXED_NODES.ungrouped), ["s4"]);
   assert.deepEqual(ids(FIXED_NODES.trash), []);
+});
+
+// ── virtual session placement ────────────────────────────────────────────────
+//
+// DSH derives a session's workspace from the header `cwd`, so re-homing a
+// session physically would mean moving its directory — which hard constraint 1
+// forbids. The sidecar therefore carries a grouping override: the row moves,
+// the bytes do not.
+
+test("a virtual placement moves the row without touching the session's workspace", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: { sessionPlacement: { s1: FIXED_NODES.ungrouped } },
+  });
+  // The counts follow the *placement*, not the registry.
+  assert.equal(tree.counts[FIXED_NODES.ungrouped], 2, "s4 plus the re-homed s1");
+  assert.equal(tree.counts[workspaceNodeId("wa")], 1, "only s2 is still shown under wa");
+  assert.equal(tree.counts[FIXED_NODES.all], sessions.length, "the flat list is unchanged");
+
+  const view = { sessions };
+  assert.deepEqual(sessionsOfNode(FIXED_NODES.ungrouped, view, tree).map((s) => s.id).sort(), ["s1", "s4"]);
+  assert.deepEqual(sessionsOfNode(workspaceNodeId("wa"), view, tree).map((s) => s.id), ["s2"]);
+  // The session itself still reports the workspace DSH registered.
+  assert.equal(view.sessions.find((session) => session.id === "s1").workspaceId, "wa");
+});
+
+test("a placement naming a vanished node degrades to the session's own workspace", () => {
+  const tree = buildAutoTree({ registry, sessions, userTree: { sessionPlacement: { s1: "d-gone" } } });
+  assert.deepEqual(
+    sessionsOfNode(workspaceNodeId("wa"), { sessions }, tree).map((s) => s.id),
+    ["s1", "s2"],
+  );
+  assert.equal(tree.counts[workspaceNodeId("wa")], 2);
 });
 
 test("R5: a session pointing at a vanished workspace is not counted anywhere it cannot be shown", () => {
@@ -119,6 +190,16 @@ test("R5: a session pointing at a vanished workspace is not counted anywhere it 
   assert.equal(tree.nodes[workspaceNodeId("gone")], undefined);
   assert.equal(tree.counts[workspaceNodeId("wa")], 2);
   assert.equal(sessionsOfNode(workspaceNodeId("gone"), { sessions }, tree).length, 0);
+});
+
+test("未分组 accepts sessions and offers a placement target; 根目录 and the views do not", () => {
+  const tree = buildAutoTree({ registry, sessions });
+  assert.equal(canAcceptSessions(workspaceNodeId("wa"), tree), true);
+  assert.equal(canAcceptSessions(FIXED_NODES.ungrouped, tree), true);
+  assert.equal(canAcceptSessions(FIXED_NODES.root, tree), false);
+  assert.equal(canAcceptSessions(FIXED_NODES.favorites, tree), false);
+  assert.equal(canAcceptSessions(FIXED_NODES.trash, tree), false);
+  assert.equal(canAcceptSessions("d-nope", tree), false);
 });
 
 test("an empty registry still yields a navigable tree", () => {
@@ -145,6 +226,8 @@ test("a user folder holds a workspace and aggregates its sessions", () => {
   assert.equal(tree.counts[workspaceNodeId("wa")], 2);
   assert.equal(tree.counts["d-work"], 2);
   // …and the total is unchanged: a folder is a container, not a new session.
+  // 根目录 no longer counts sessions directly; it aggregates its subtree, which
+  // still reaches every session through the workspaces below it.
   assert.equal(tree.counts[FIXED_NODES.root], sessions.length);
 });
 
@@ -270,14 +353,15 @@ test("ancestorsOf and nearestWorkspace follow the chain", () => {
   assert.equal(nearestWorkspace("d-a", tree), null);
 });
 
-test("trashed sessions leave the root and appear only in the trash", () => {
+test("trashed sessions leave the live views and appear only in the trash", () => {
   const tree = buildAutoTree({ registry, sessions, trashedIds: ["s1"] });
   const view = { sessions };
   const trashed = new Set(["s1"]);
-  assert.equal(tree.counts[FIXED_NODES.root], sessions.length - 1);
+  // 所有会话 is the live set; the bin is the only place a trashed session shows.
+  assert.equal(tree.counts[FIXED_NODES.all], sessions.length - 1);
   assert.equal(tree.counts[FIXED_NODES.trash], 1);
   assert.deepEqual(
-    sessionsOfNode(FIXED_NODES.root, view, tree, { trashedIds: trashed }).map((s) => s.id),
+    sessionsOfNode(FIXED_NODES.all, view, tree, { trashedIds: trashed }).map((s) => s.id),
     ["s2", "s3", "s4"],
   );
   assert.deepEqual(

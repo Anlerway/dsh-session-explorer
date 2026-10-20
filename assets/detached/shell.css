@@ -163,6 +163,30 @@ html,body{height:100%;margin:0;background:var(--dsw-alias-bg-layer-1,#232324);co
 .se-shell .trow.sel::before{content:"";position:absolute;left:0;top:5px;bottom:5px;width:3px;border-radius:2px;background:var(--sm-accent)}
 .se-shell .trow.drop{background:color-mix(in oklab, var(--sm-accent) 24%, transparent);outline:1px dashed var(--sm-accent);outline-offset:-2px}
 .se-shell .trow.bad{opacity:.4}
+
+/* ── shortcuts (P13) ──────────────────────────────────────────────────── */
+/* A shortcut is a reference, not the thing itself: it renders with a small
+   arrow and a dashed underline so a row that *points* somewhere is never
+   mistaken for the row that lives there. */
+.se-shell .scmark{display:inline-grid;place-items:center;flex:0 0 14px;width:14px;height:14px;
+  color:var(--sm-accent);opacity:.8}
+.se-shell .shortcutMark{display:inline-grid;place-items:center;flex:0 0 12px;width:12px;height:12px;
+  color:var(--sm-accent);opacity:.75}
+.se-shell .trow.sc .lbl{border-bottom:1px dashed color-mix(in oklab, var(--sm-accent) 45%, transparent)}
+.se-shell .row.scrow .nm{border-bottom:1px dashed color-mix(in oklab, var(--sm-accent) 40%, transparent)}
+.se-shell .row.scrow .fl-ic .ic{color:var(--sm-accent);opacity:.85}
+.se-shell .row.scrow .wstag{background:color-mix(in oklab, var(--sm-accent) 14%, transparent);color:var(--sm-accent)}
+.se-shell .row.pinned-row .nm::after{content:"";}
+.se-shell .trow.pinned .lbl{font-weight:600}
+
+/* ── theme sync (P13) ─────────────────────────────────────────────────── */
+/* The page applies the theme's tokens on :root, so a light theme keeps dark
+   text on light surfaces without extra rules here: the bridge variables simply
+   resolve to the values DSH reported. This only pins the UA colour scheme so
+   form controls and scrollbars follow. */
+:root[data-theme="light"]{color-scheme:light}
+:root[data-theme="dark"]{color-scheme:dark}
+
 /* Refused drop target in the list: a container row that cannot take this
    payload greys out and shows a 🚫 cursor instead of accepting and failing. */
 .se-shell .row[data-drop="bad"]{opacity:.45;outline:1px dashed var(--sm-danger);outline-offset:-2px}

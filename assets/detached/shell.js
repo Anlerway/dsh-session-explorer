@@ -25,6 +25,7 @@
   // ── constants (mirrored from lib/constants.js) ─────────────────────────
   const FIXED = {
     root: "f-root",
+    all: "f-all",
     favorites: "f-favorites",
     todos: "f-todos",
     trash: "f-trash",
@@ -210,6 +211,10 @@
     copy: '<rect x="5.4" y="5.4" width="8" height="8" rx="1"/><path d="M10.6 5.4V3.2a.6.6 0 0 0-.6-.6H3.2a.6.6 0 0 0-.6.6v6.8c0 .33.27.6.6.6h2.2"/>',
     paste: '<rect x="3.4" y="3.4" width="9.2" height="10.2" rx="1"/><path d="M6.2 3.4V2.4h3.6v1"/><path d="M6 7.4h4M6 10h4"/>',
     sort: '<path d="M4.4 3v10M2.4 11l2 2 2-2M11.6 13V3M9.6 5l2-2 2 2"/>',
+    shortcut: '<rect x="2.4" y="8.4" width="5.2" height="5.2" rx="1"/><path d="M9.4 2.4h4.2v4.2M13.6 2.4L7.6 8.4"/>',
+    details: '<rect x="2.4" y="3.4" width="11.2" height="9.2" rx="1"/><path d="M9.6 3.4v9.2"/>',
+    locate: '<path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3"/><circle cx="8" cy="8" r="2.1"/>',
+    download: '<path d="M8 2.6v7.2M5.2 7.4L8 10.2l2.8-2.8"/><path d="M2.8 12.4h10.4"/>',
     grid: '<rect x="2.4" y="2.4" width="4.6" height="4.6" rx=".6"/><rect x="9" y="2.4" width="4.6" height="4.6" rx=".6"/><rect x="2.4" y="9" width="4.6" height="4.6" rx=".6"/><rect x="9" y="9" width="4.6" height="4.6" rx=".6"/>',
     list: '<path d="M3 4h10M3 8h10M3 12h10"/>',
     details: '<rect x="2.4" y="3.4" width="11.2" height="9.2" rx="1"/><path d="M9.6 3.4v9.2"/>',
@@ -238,16 +243,32 @@
   // ── icons per node kind (mirrors lib/client.js KIND_ICON) ──────────────
   const KIND_ICON = {
     root: "folder",
+    all: "details",
     "default-workspace": "home",
     workspace: "monitor",
     ungrouped: "chat",
     favorites: "star",
     todos: "todo",
     trash: "trash",
+    shortcut: "shortcut",
   };
+
+  /** A shortcut shows its target's name, so renaming the target is reflected. */
+  function nodeLabel(node) {
+    if (!node) return "";
+    if (node.id === FIXED.root) return "根目录";
+    if (node.id === FIXED.all) return "所有会话";
+    if (node.kind === "shortcut") {
+      const target =
+        node.shortcutKind === "workspace" ? nodeOf("w-" + node.targetId) : node.shortcutKind === "folder" ? nodeOf(node.targetId) : null;
+      return node.name || (target ? nodeLabel(target) : "失效的快捷方式");
+    }
+    return node.name ?? node.path ?? node.id;
+  }
 
   const iconOfNode = (node) => {
     if (!node) return "folder";
+    if (node.kind === "shortcut") return "shortcut";
     return KIND_ICON[node.kind] ?? (node.type === "workspace" ? "monitor" : "folder");
   };
 
@@ -333,20 +354,53 @@
     if (nodeId === FIXED.todos) return live.filter((session) => session.todo);
     const node = nodeOf(nodeId);
     if (!node) return [];
-    if (node.kind === "ungrouped") return live.filter((session) => !session.workspaceId);
-    if (node.workspaceId) return live.filter((session) => session.workspaceId === node.workspaceId);
-    if (node.id === FIXED.root) return live;
+    if (node.id === FIXED.all) return live;
+    // The node a session is *shown* in: its workspace row, unless the user
+    // dropped it somewhere else. Mirrors the Host's placementOfNode().
+    const placement = state.boot?.tree?.sessionPlacement ?? {};
+    const placeOf = (session) => {
+      const override = placement[session.id];
+      if (typeof override === "string" && nodes()[override]) return override;
+      if (!session.workspaceId) return FIXED.ungrouped;
+      const workspaceNodeId = "w-" + session.workspaceId;
+      return nodes()[workspaceNodeId] ? workspaceNodeId : null;
+    };
+    if (node.kind === "ungrouped") return live.filter((session) => placeOf(session) === FIXED.ungrouped);
+    if (node.workspaceId) return live.filter((session) => placeOf(session) === nodeId);
+    if (node.id === FIXED.root) {
+      // 根目录 is the directory tree: every session placed on a workspace node.
+      const below = idsBelow(nodeId);
+      return live.filter((session) => {
+        const placed = placeOf(session);
+        return Boolean(placed && placed !== FIXED.ungrouped && below.has(placed));
+      });
+    }
     // A folder aggregates its subtree.
+    const ids = idsBelow(nodeId);
+    return live.filter((session) => {
+      const placed = placeOf(session);
+      return Boolean(placed && ids.has(placed));
+    });
+  }
+
+  /** Every workspace *node id* at or below one node, following shortcuts. */
+  function idsBelow(nodeId) {
     const ids = new Set();
     const stack = [nodeId];
+    const seen = new Set();
     while (stack.length > 0) {
       const id = stack.pop();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
       const current = nodeOf(id);
       if (!current) continue;
-      if (current.workspaceId) ids.add(current.workspaceId);
+      if (current.workspaceId) ids.add(id);
+      if (current.kind === "shortcut" && current.shortcutKind === "workspace" && nodeOf("w-" + current.targetId)) {
+        ids.add("w-" + current.targetId);
+      }
       for (const child of children()[id] ?? []) stack.push(child);
     }
-    return live.filter((session) => session.workspaceId && ids.has(session.workspaceId));
+    return ids;
   }
 
   function nearestWorkspace(nodeId) {
@@ -362,10 +416,17 @@
     return null;
   }
 
+  /**
+   * May this node hold a folder or a workspace?
+   *
+   * 未分组 is a real container now, 收藏 / 待办 hold references rather than a
+   * tree, and 所有会话 is a view.
+   */
   function canHoldContainers(nodeId) {
     const node = nodeOf(nodeId);
     if (!node) return false;
-    return !(node.fixed && node.id !== FIXED.root);
+    if (!node.fixed) return true;
+    return node.id === FIXED.root || node.kind === "ungrouped";
   }
 
   function crumbsFor(nodeId) {
@@ -462,9 +523,11 @@
 
   // ── rendering: tree ────────────────────────────────────────────────────
   function renderTrow(options) {
-    const { scope, iconName, label, count, active, tone, depth = 0, hasKids = false, expanded = false, draggable = false, rename = null, canRename = false } = options;
+    const { scope, iconName, label, count, active, tone, depth = 0, hasKids = false, expanded = false, draggable = false, rename = null, canRename = false, pinned = false } = options;
     const cls = ["trow"];
     if (tone === "ws") cls.push("ws");
+    if (tone === "shortcut") cls.push("sc");
+    if (pinned) cls.push("pinned");
     if (active) cls.push("sel");
     const body = rename
       ? '<input class="lbl-edit" id="rename-input" data-rename-node="' + esc(scope) + '" value="' + esc(rename.value) + '" spellcheck="false" autocomplete="off">'
@@ -489,9 +552,9 @@
     const countMap = counts();
     const rows = [];
 
-    const defaultNode = Object.values(nodeMap).find((node) => node.kind === "default-workspace") ?? null;
     const fixedEntries = [
-      { id: defaultNode?.id ?? FIXED.root, icon: "home", label: "默认工作区", count: defaultNode ? countMap[defaultNode.id] ?? 0 : countMap[FIXED.root] ?? 0 },
+      { id: FIXED.root, icon: "folder", label: "根目录", count: countMap[FIXED.root] ?? 0 },
+      { id: FIXED.all, icon: "details", label: "所有会话", count: countMap[FIXED.all] ?? 0 },
       { id: FIXED.ungrouped, icon: "chat", label: "未分组", count: countMap[FIXED.ungrouped] ?? 0 },
       { id: FIXED.trash, icon: "trash", label: "回收站", count: countMap[FIXED.trash] ?? 0 },
       { id: FIXED.todos, icon: "todo", label: "待办", count: countMap[FIXED.todos] ?? 0 },
@@ -501,7 +564,8 @@
       rows.push(renderTrow({ scope: entry.id, iconName: entry.icon, label: entry.label, count: entry.count, active: scopeId() === entry.id }));
     }
 
-    const quickAccess = Array.isArray(tree?.quickAccess) ? tree.quickAccess : [];
+    // 置顶 containers — the tree's half of the one 置顶 band.
+    const quickAccess = Array.isArray(tree?.pinnedNodes) ? tree.pinnedNodes : [];
     if (quickAccess.length > 0) {
       rows.push('<div class="tsep"></div><div class="tcap">快速访问</div>');
       for (const entry of quickAccess) {
@@ -527,7 +591,7 @@
       if (!node) return;
       const kids = (childMap[id] ?? [])
         .map((child) => nodeMap[child])
-        .filter((child) => child && !VIEW_KINDS.has(child.kind))
+        .filter((child) => child && child.id !== FIXED.all && child.id !== FIXED.trash)
         .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
       const open = state.expanded.has(id);
       const isWorkspace = node.type === "workspace";
@@ -540,16 +604,17 @@
         renderTrow({
           scope: id,
           iconName: iconOfNode(node),
-          label: id === FIXED.root ? "根目录" : node.name ?? node.path ?? id,
+          label: nodeLabel(node),
           count: countMap[id] ?? 0,
           active: scopeId() === id,
-          tone: isWorkspace ? "ws" : "default",
+          tone: isWorkspace ? "ws" : node.kind === "shortcut" ? "shortcut" : "default",
+          pinned: Boolean(state.boot?.tree?.pins?.[id]),
           depth,
           hasKids: kids.length > 0,
           expanded: open,
           draggable: isWorkspace || !node.fixed,
           rename: renaming,
-          canRename: !node.fixed && node.kind !== "default-workspace",
+          canRename: !node.fixed && (node.type === "workspace" || node.kind === "folder"),
         }),
       );
       if (open) for (const child of kids) walk(child.id, depth + 1);
@@ -616,7 +681,9 @@
   function renderContainerRow(node, now) {
     const isWorkspace = node.type === "workspace";
     const isFolder = node.type === "folder" && node.kind === "folder";
-    const editable = isWorkspace ? node.kind !== "default-workspace" : isFolder;
+    // 默认工作区 is an ordinary workspace now — it moves, pins, deletes, and so it
+    // renames too — which leaves "is this deletable" as the only editability rule.
+    const editable = isWorkspace ? true : isFolder;
     const effectiveId = isWorkspace ? node.workspaceId ?? node.id : node.id;
     const renaming =
       state.renaming && state.renaming.kind === (isWorkspace ? "workspace" : "folder") && state.renaming.id === effectiveId ? state.renaming : null;
@@ -786,7 +853,7 @@
     const isWorkspace = node?.type === "workspace";
     const kind = session ? "session" : isWorkspace ? "workspace" : "folder";
     const label = session ? session.displayTitle ?? session.id : node?.name ?? node?.id ?? "";
-    const canRename = session ? true : Boolean(node && !node.fixed && node.kind !== "default-workspace");
+    const canRename = session ? true : Boolean(node && !node.fixed && (node.type === "workspace" || node.kind === "folder"));
     const renaming = state.renaming && state.renaming.kind === (session ? "session" : isWorkspace ? "workspace" : "folder") &&
       state.renaming.id === (session ? session.id : isWorkspace ? node?.workspaceId ?? node?.id : node?.id)
       ? state.renaming
@@ -904,6 +971,9 @@
       : '<div class="det-actions">' +
         '<button type="button" class="act primary" data-act="enter">' + icon("external") + "<span>打开</span></button>" +
         '<button type="button" class="act" data-act="copy-node-id">' + icon("copy") + "<span>复制编号</span></button>" +
+        // 跳转至文件位置: only a workspace has a directory DSH can verify and hand
+        // to the OS file manager; a folder is a sidecar node with no path of its own.
+        (isWorkspace ? '<button type="button" class="act" data-act="reveal-workspace">' + icon("locate") + "<span>跳转至文件位置</span></button>" : "") +
         "</div>";
 
     return (
@@ -1010,6 +1080,7 @@
   function renderCmdbar() {
     const targets = idsToActOn();
     const scope = scopeId();
+    const isTrash = scope === FIXED.trash;
     const clip = state.clipboard;
     const canPaste = canPasteHere();
     return (
@@ -1019,31 +1090,36 @@
       '<span class="ic" data-i="plus">' + icon("plus") + "</span><span>新建</span>" +
       '<span class="ic" data-i="chevdown">' + icon("chevdown", 11) + "</span></button>" +
       '<span class="cmsep"></span>' +
-      cmd({ act: "cut", iconName: "cut", iconOnly: true, title: "剪切（Ctrl+X）", disabled: targets.length === 0 }) +
-      cmd({ act: "copy", iconName: "copy", iconOnly: true, title: "复制会话（Ctrl+C）", disabled: !targets.some((id) => allSessions().has(id)) }) +
-      cmd({
-        act: "paste",
-        iconName: "paste",
-        iconOnly: true,
-        on: clip.ids.length > 0 || clip.nodes.length > 0,
-        disabled: !canPaste,
-        title:
-          clip.nodes.length > 0
-            ? "粘贴 " + clip.nodes.length + " 个目录（Ctrl+V）"
-            : clip.ids.length > 0
-              ? "粘贴 " + clip.ids.length + " 个会话（Ctrl+V）"
-              : "粘贴（Ctrl+V）",
-      }) +
-      cmd({ act: "rename", iconName: "pencil", iconOnly: true, title: "重命名（F2）" }) +
+      // 回收站 is a bin, not a workbench: cut / copy / paste / rename / 收藏 / 待办 /
+      // 置顶 / 归档 / 分叉 all describe a live session, so a row in the bin shows
+      // only what a bin can actually do — 还原, 永久删除, 清空.
+      (isTrash ? "" : cmd({ act: "cut", iconName: "cut", iconOnly: true, title: "剪切（Ctrl+X）", disabled: targets.length === 0 })) +
+      (isTrash ? "" : cmd({ act: "copy", iconName: "copy", iconOnly: true, title: "复制会话（Ctrl+C）", disabled: !targets.some((id) => allSessions().has(id)) })) +
+      (isTrash
+        ? ""
+        : cmd({
+            act: "paste",
+            iconName: "paste",
+            iconOnly: true,
+            on: clip.ids.length > 0 || clip.nodes.length > 0,
+            disabled: !canPaste,
+            title:
+              clip.nodes.length > 0
+                ? "粘贴 " + clip.nodes.length + " 个目录（Ctrl+V）"
+                : clip.ids.length > 0
+                  ? "粘贴 " + clip.ids.length + " 个会话（Ctrl+V）"
+                  : "粘贴（Ctrl+V）",
+          })) +
+      (isTrash ? "" : cmd({ act: "rename", iconName: "pencil", iconOnly: true, title: "重命名（F2）" })) +
       cmd({ act: "delete", iconName: "trash", iconOnly: true, title: "删除", danger: true }) +
-      (scope === FIXED.trash ? cmd({ act: "restore", iconName: "restore", label: "还原" }) : "") +
-      (scope === FIXED.trash ? cmd({ act: "empty-trash", iconName: "trash", label: "清空回收站", danger: true }) : "") +
-      '<span class="cmsep"></span>' +
-      cmd({ act: "favorite", iconName: "star", label: "收藏" }) +
-      cmd({ act: "todo", iconName: "todo", label: "待办" }) +
-      cmd({ act: "pin", iconName: "pin", label: "置顶" }) +
-      cmd({ act: "archive", iconName: "archive", label: "归档" }) +
-      cmd({ act: "fork", iconName: "branch", label: "分叉", title: "分叉会话（从当前位置另起一支）" }) +
+      (isTrash ? cmd({ act: "restore", iconName: "restore", label: "还原" }) : "") +
+      (isTrash ? cmd({ act: "empty-trash", iconName: "trash", label: "清空回收站", danger: true }) : "") +
+      (isTrash ? "" : '<span class="cmsep"></span>') +
+      (isTrash ? "" : cmd({ act: "favorite", iconName: "star", label: "收藏" })) +
+      (isTrash ? "" : cmd({ act: "todo", iconName: "todo", label: "待办" })) +
+      (isTrash ? "" : cmd({ act: "pin", iconName: "pin", label: "置顶" })) +
+      (isTrash ? "" : cmd({ act: "archive", iconName: "archive", label: "归档" })) +
+      (isTrash ? "" : cmd({ act: "fork", iconName: "branch", label: "分叉", title: "分叉会话（从当前位置另起一支）" })) +
       '<span class="cmsep"></span>' +
       cmd({ act: "filter", iconName: "tag", label: "筛选", on: filterActive() }) +
       "</div>" +
@@ -1198,10 +1274,14 @@
     try {
       const element = document.activeElement;
       if (!element || !element.id) return null;
+      // Only text fields carry live state worth preserving; a button that had
+      // focus should not be re-focused after every render.
+      const isField = element.tagName === "INPUT" || element.tagName === "TEXTAREA";
       return {
         id: element.id,
-        start: typeof element.selectionStart === "number" ? element.selectionStart : null,
-        end: typeof element.selectionEnd === "number" ? element.selectionEnd : null,
+        value: isField && typeof element.value === "string" ? element.value : null,
+        start: isField && typeof element.selectionStart === "number" ? element.selectionStart : null,
+        end: isField && typeof element.selectionEnd === "number" ? element.selectionEnd : null,
       };
     } catch {
       return null;
@@ -1216,6 +1296,12 @@
       const element = document.getElementById(saved.id);
       if (!element || typeof element.focus !== "function") return;
       element.focus();
+      // The DOM is rebuilt from a string, so the element starts with an empty
+      // `value` and no selection. Assigning on the restored node — not reusing
+      // the captured one — is what makes a keystroke land in the box the user
+      // is typing into: a stale reference would receive the input events while
+      // the visible field stayed empty, which is exactly "输入框捕获输入失败".
+      if (saved.value !== null && element.value !== saved.value) element.value = saved.value;
       if (saved.start !== null && typeof element.setSelectionRange === "function") element.setSelectionRange(saved.start, saved.end ?? saved.start);
     } catch {
       /* focus is a nicety; a missing node just means the row went away */
@@ -1506,9 +1592,20 @@
     const nodeRow = closest(event.target, "[data-node]");
     if (nodeRow) {
       const id = nodeRow.getAttribute("data-node");
-      selectNode(id);
+      // Like a session row: right-clicking inside a selection must not navigate
+      // (navigation clears the checked set) or the multi-selection collapses to
+      // the one row under the pointer.
+      if (!(state.checked.size > 1 && state.checked.has(id))) selectNode(id);
+      else {
+        state.selectedNode = id;
+        state.selected = null;
+        render();
+      }
       const node = nodeOf(id);
-      if (node && !node.fixed) openMenu(event.clientX, event.clientY, nodeMenu(node));
+      // Fixed rail entries get the container menu only where it can act; 收藏 /
+      // 待办 get the "paste as shortcut" one.
+      if (node && (!node.fixed || node.kind === "shortcut")) openMenu(event.clientX, event.clientY, nodeMenu(node));
+      else if (node && (id === FIXED.favorites || id === FIXED.todos)) openMenu(event.clientX, event.clientY, shortcutContainerMenu(id));
       else openMenu(event.clientX, event.clientY, blankMenu());
       return;
     }
@@ -1635,7 +1732,10 @@
     const node = nodeOf(nodeId);
     if (!drag || !node) return { ok: false };
     if (drag.kind === "session") {
-      if (node.type !== "workspace" || !node.workspaceId) return { ok: false, reason: "会话只能放进工作区" };
+      // 未分组 accepts sessions too, but as a *virtual* placement: the payload
+      // stays in its workspace directory (hard constraint 1).
+      if (nodeId === FIXED.ungrouped) return { ok: true, place: FIXED.ungrouped, name: "未分组" };
+      if (node.type !== "workspace" || !node.workspaceId) return { ok: false, reason: "会话只能放进工作区或未分组" };
       return { ok: true, workspaceId: node.workspaceId, name: node.name ?? node.workspaceId };
     }
     if (drag.kind === "node") {
@@ -1687,7 +1787,8 @@
     }
     event.preventDefault();
     const copy = event.ctrlKey || event.metaKey;
-    if (drag.kind === "session") void moveSessions(drag.ids, verdict.workspaceId, copy, verdict.name);
+    if (drag.kind === "session" && verdict.place) void placeSessions(drag.ids, verdict.place);
+    else if (drag.kind === "session") void moveSessions(drag.ids, verdict.workspaceId, copy, verdict.name);
     else if (drag.kind === "node") void moveNodeTo(drag.id, verdict.parent);
   }
 
@@ -1898,6 +1999,19 @@
     const session = state.selected ? allSessions().get(state.selected) : null;
     if (!session) return blankMenu();
     const total = idsToActOn().length;
+    // A right-click inside a multi-selection acts on the selection, not on the
+    // row under the pointer — and it offers only what makes sense for a set:
+    // copy / cut / paste / delete. Anything per-row (tags, notes, export to a
+    // name) would silently apply one row's values to every checked row.
+    if (state.checked.size > 1 && state.checked.has(session.id)) {
+      return [
+        { id: "copy", label: "复制 " + state.checked.size + " 项", icon: "copy", key: "Ctrl+C" },
+        { id: "cut", label: "剪切 " + state.checked.size + " 项", icon: "cut", key: "Ctrl+X" },
+        { id: "paste", label: "粘贴到此处", icon: "paste", key: "Ctrl+V", disabled: !canPasteHere() },
+        { sep: true },
+        { id: "delete", label: "删除 " + state.checked.size + " 项", icon: "trash", danger: true },
+      ];
+    }
     const items = [];
     if (session.trashed) {
       items.push({ id: "rename", label: "重命名", icon: "pencil", key: "F2" });
@@ -1916,6 +2030,12 @@
     items.push({ id: "copy", label: "复制", icon: "copy", key: "Ctrl+C" });
     items.push({ id: "paste", label: "粘贴到此处", icon: "paste", key: "Ctrl+V", disabled: !canPasteHere() });
     items.push({ sep: true });
+    items.push({ id: "add-favorite", label: "添加到收藏（快捷方式）", icon: "star" });
+    items.push({ id: "add-todo", label: "添加到待办（快捷方式）", icon: "todo" });
+    items.push({ sep: true });
+    items.push({ id: "export-md", label: "导出为 Markdown", icon: "download" });
+    items.push({ id: "export-jsonl", label: "导出为 JSONL", icon: "download" });
+    items.push({ sep: true });
     items.push({ id: "delete", label: total > 1 ? "删除 " + total + " 个会话（进回收站）" : "删除（进回收站）", icon: "trash", danger: true });
     return items;
   }
@@ -1923,7 +2043,20 @@
   function nodeMenu(node) {
     const isWorkspace = node.type === "workspace";
     const items = [];
+    if (node.kind === "shortcut") {
+      // A shortcut's menu is about the *reference*: jump to the thing, or drop
+      // the reference. It never offers to move what it points at.
+      items.push({ id: "reveal-target", label: "跳转到原位置", icon: "locate" });
+      items.push({ sep: true });
+      items.push({ id: "remove-shortcut", label: "移除快捷方式", icon: "x", danger: true });
+      return items;
+    }
     items.push({ id: "rename", label: isWorkspace ? "重命名工作区" : "重命名文件夹", icon: "pencil", key: "F2" });
+    const pinned = Boolean(state.boot?.tree?.pins?.[node.id]);
+    items.push({ id: "pin-node", label: pinned ? "取消置顶" : "置顶", icon: "pin" });
+    if (isWorkspace) items.push({ id: "reveal-workspace", label: "在文件管理器中显示", icon: "locate" });
+    items.push({ id: "add-favorite", label: "添加到收藏", icon: "star" });
+    items.push({ id: "add-todo", label: "添加到待办", icon: "todo" });
     items.push({ sep: true });
     items.push({ id: "cut", label: "剪切", icon: "cut", key: "Ctrl+X" });
     if (canHoldContainers(node.id)) {
@@ -1931,11 +2064,19 @@
       items.push({ id: "new-session", label: "在此新建会话", icon: "plus" });
       items.push({ id: "paste", label: "粘贴到此处", icon: "paste", key: "Ctrl+V", disabled: !canPasteHere() });
     }
-    if (!isWorkspace) {
-      items.push({ sep: true });
-      items.push({ id: "delete-folder", label: "删除文件夹", icon: "trash", danger: true });
-    }
+    items.push({ sep: true });
+    if (isWorkspace) items.push({ id: "delete-workspace", label: "删除工作区", icon: "trash", danger: true });
+    else items.push({ id: "delete-folder", label: "删除文件夹", icon: "trash", danger: true });
     return items;
+  }
+
+  /** 收藏 / 待办: the only thing to do here is add a reference. */
+  function shortcutContainerMenu(parent) {
+    return [
+      { id: "paste-shortcut", label: "粘贴为快捷方式", icon: "paste", disabled: state.clipboard.ids.length === 0 && state.clipboard.nodes.length === 0 },
+      { sep: true },
+      { id: "select-all", label: "全选", icon: "check", key: "Ctrl+A" },
+    ];
   }
 
   function blankMenu() {
@@ -1998,8 +2139,175 @@
         return;
       case "open-dsh":
         return openInDsh(state.selected ? allSessions().get(state.selected) : null);
+      case "export-md":
+        return void (await exportSession("md"));
+      case "export-jsonl":
+        return void (await exportSession("jsonl"));
+      case "add-favorite":
+        return void (await addShortcutTo(FIXED.favorites));
+      case "paste-shortcut":
+        return void (await pasteAsShortcut());
+      case "add-todo":
+        return void (await addShortcutTo(FIXED.todos));
+      case "pin-node": {
+        const node = state.selectedNode ? nodeOf(state.selectedNode) : null;
+        if (!node) return;
+        const pinned = Boolean(state.boot?.tree?.pins?.[node.id]);
+        return void (await pinNode(node.id, !pinned));
+      }
+      case "reveal-workspace": {
+        const node = state.selectedNode ? nodeOf(state.selectedNode) : null;
+        return void (await revealWorkspace(node));
+      }
+      case "remove-shortcut": {
+        const node = state.selectedNode ? nodeOf(state.selectedNode) : null;
+        if (node) await removeShortcut(node.id);
+        return undefined;
+      }
+      case "reveal-target": {
+        const node = state.selectedNode ? nodeOf(state.selectedNode) : null;
+        if (node) revealShortcutTarget(node);
+        return undefined;
+      }
+      case "delete-workspace": {
+        const node = state.selectedNode ? nodeOf(state.selectedNode) : null;
+        return void (await removeWorkspace(node));
+      }
       default:
         return runAction(id);
+    }
+  }
+
+  // ── bridge-backed operations (shortcuts, pins, export, reveal) ─────────
+  /** Add the current selection to 收藏 / 待办 as references. */
+  async function addShortcutTo(parent) {
+    const node = state.selectedNode ? nodeOf(state.selectedNode) : null;
+    const ids = idsToActOn().filter((id) => allSessions().has(id));
+    try {
+      if (node) {
+        const kind = node.type === "workspace" ? "workspace" : "folder";
+        const targetId = kind === "workspace" ? node.workspaceId ?? node.id : node.id;
+        await post("/shortcuts", { parent, kind, targetId });
+      } else {
+        for (const id of ids) await post("/shortcuts", { parent, kind: "session", targetId: id });
+      }
+      await reload(false);
+      setHint("已添加快捷方式（原位置不变）");
+    } catch (error) {
+      setHint(String(error?.message ?? error));
+    }
+  }
+
+  /** Paste the clipboard into the *current* container as references. */
+  async function pasteAsShortcut() {
+    const parent = scopeId();
+    if (parent !== FIXED.favorites && parent !== FIXED.todos) return setHint("先进入 收藏 或 待办");
+    const clip = state.clipboard;
+    if (clip.ids.length === 0 && clip.nodes.length === 0) return setHint("剪贴板是空的：先复制一个会话或目录");
+    try {
+      for (const id of clip.ids) await post("/shortcuts", { parent, kind: "session", targetId: id });
+      for (const nodeId of clip.nodes) {
+        const node = nodeOf(nodeId);
+        if (!node) continue;
+        const kind = node.type === "workspace" ? "workspace" : "folder";
+        const targetId = kind === "workspace" ? node.workspaceId ?? node.id : node.id;
+        await post("/shortcuts", { parent, kind, targetId });
+      }
+      state.clipboard = { mode: null, ids: [], nodes: [] };
+      await reload(false);
+      setHint("已粘贴为快捷方式（原位置不变）");
+    } catch (error) {
+      setHint(String(error?.message ?? error));
+    }
+  }
+
+  async function removeShortcut(id) {
+    try {
+      await del("/shortcuts/" + encodeURIComponent(id));
+      state.selectedNode = null;
+      await reload(false);
+      setHint("已移除快捷方式");
+    } catch (error) {
+      setHint(String(error?.message ?? error));
+    }
+  }
+
+  function revealShortcutTarget(node) {
+    if (!node) return;
+    if (node.shortcutKind === "session") {
+      const session = allSessions().get(node.targetId);
+      if (!session) return setHint("快捷方式指向的会话已经不存在");
+      revealSession(session);
+      return;
+    }
+    const target = node.shortcutKind === "workspace" ? "w-" + node.targetId : node.targetId;
+    if (!nodeOf(target)) return setHint("快捷方式指向的目录已经不存在");
+    selectNode(target);
+  }
+
+  async function pinNode(nodeId, pinned) {
+    try {
+      await post("/nodes/" + encodeURIComponent(nodeId) + "/pin", { pinned });
+      await reload(false);
+      setHint(pinned ? "已置顶" : "已取消置顶");
+    } catch (error) {
+      setHint(String(error?.message ?? error));
+    }
+  }
+
+  async function revealWorkspace(node) {
+    if (!node || node.type !== "workspace") return;
+    try {
+      await post("/workspaces/" + encodeURIComponent(node.workspaceId ?? node.id) + "/reveal", {});
+      setHint("已在文件管理器中打开");
+    } catch (error) {
+      setHint(String(error?.message ?? error));
+    }
+  }
+
+  async function removeWorkspace(node) {
+    if (!node || node.type !== "workspace") return;
+    const ok = await confirmBox("删除工作区", "删除这个工作区登记？文件夹和会话都会保留，会话回到 未分组。", "删除");
+    if (!ok) return;
+    try {
+      await post("/workspaces/" + encodeURIComponent(node.workspaceId ?? node.id) + "/delete", {});
+      if (state.selectedNode === node.id) state.selectedNode = null;
+      await reload(false);
+      setHint("工作区已删除，会话已归入 未分组");
+    } catch (error) {
+      setHint(String(error?.message ?? error));
+    }
+  }
+
+  /**
+   * Export one session.
+   *
+   * The window cannot save a file itself (the page has no filesystem access), so
+   * this routes through the same Host endpoint the panel uses and lets the OS
+   * download it. That is why the URL carries `download=1`: the response is the
+   * file, not an envelope.
+   */
+  async function exportSession(format) {
+    const id = state.selected;
+    if (!id) return setHint("先选择一个会话");
+    const kind = format === "jsonl" ? "jsonl" : "md";
+    try {
+      const context = await window.se.context();
+      const port = context?.port;
+      if (!port) return setHint("导出需要 Host 端口，当前不可用");
+      const url =
+        "http://127.0.0.1:" + port + "/session-explorer/api/export?sessionId=" +
+        encodeURIComponent(id) + "&format=" + kind + "&download=1";
+      // A download, not a navigation: the page stays on the explorer.
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setHint("已导出 " + (kind === "jsonl" ? "JSONL" : "Markdown"));
+    } catch (error) {
+      setHint(String(error?.message ?? error));
     }
   }
 
@@ -2214,7 +2522,9 @@
 
   function selectNode(id) {
     navigate(id);
-    state.selectedNode = nodeOf(id) && !nodeOf(id).fixed ? id : null;
+    const node = nodeOf(id);
+    // A shortcut is selectable so its menu can act on the reference itself.
+    state.selectedNode = node && (!node.fixed || node.kind === "shortcut") ? id : null;
     state.selected = null;
     state.tagOpen = false;
     render();
@@ -2767,9 +3077,39 @@
     return undefined;
   }
 
+  /**
+   * Move sessions into a container *without* touching their directory.
+   *
+   * 未分组 holds sessions of its own, but a session registered to a workspace can
+   * only be re-homed by moving it — DSH reads the workspace from the header
+   * `cwd`, and this plugin never rewrites `sessions/`. The host stores a
+   * grouping override in the tree sidecar instead.
+   */
+  async function placeSessions(ids, parentId) {
+    if (!ids?.length || !parentId) return;
+    await post("/sessions/placement", { ids, parent: parentId });
+    pushUndo("已把 " + ids.length + " 个会话放回原来的位置", async () => {
+      await post("/sessions/placement", { ids, parent: "" });
+    });
+    state.clipboard = { mode: null, ids: [], nodes: [] };
+    await reload();
+    setHint("已把 " + ids.length + " 个会话放到「" + (nodeOf(parentId)?.name ?? "未分组") + "」");
+  }
+
   async function moveSessions(ids, workspaceId, copy, workspaceName) {
     const map = allSessions();
     const previous = ids.map((id) => map.get(id)).filter(Boolean);
+    // A session already *shown* here only needs its override cleared; a real
+    // move would rewrite the header and relocate the payload for no gain.
+    const settled = copy
+      ? []
+      : ids.filter((id) => state.boot?.tree?.sessionPlacement?.[id] && map.get(id)?.workspaceId === workspaceId);
+    if (settled.length > 0) await post("/sessions/placement", { ids: settled, parent: "" });
+    ids = ids.filter((id) => !settled.includes(id));
+    if (ids.length === 0) {
+      await reload();
+      return setHint("已把 " + settled.length + " 个会话放回「" + workspaceName + "」");
+    }
     await post("/move", { ids, target: { workspaceId }, copy });
     if (!copy) {
       const groups = new Map();
@@ -2876,6 +3216,45 @@
     }
   }
 
+  // ── theme ──────────────────────────────────────────────────────────────
+  /**
+   * Apply the palette DSH is currently using.
+   *
+   * The window is a `file://` page, so none of the app's `--dsw-alias-*` tokens
+   * exist here and shell.css resolves them to its dark fallbacks. The Host
+   * remembers what the panel reported (see lib/host/theme.js), and this copies
+   * those values onto the document root so a light theme — or any theme plugin —
+   * reaches the window too.
+   *
+   * A token that is absent is *left alone*: the fallback in shell.css is the
+   * right answer for a theme that does not define it.
+   */
+  async function applyTheme() {
+    if (!window.se || typeof window.se.theme !== "function") return;
+    let theme = null;
+    try {
+      theme = await window.se.theme();
+    } catch {
+      return;
+    }
+    if (!theme || typeof theme !== "object" || !theme.tokens) return;
+    const rootElement = document.documentElement;
+    if (!rootElement || !rootElement.style) return;
+    for (const [name, value] of Object.entries(theme.tokens)) {
+      if (typeof name !== "string" || !name.startsWith("--") || typeof value !== "string") continue;
+      try {
+        rootElement.style.setProperty(name, value);
+      } catch {
+        /* one bad token must not abort the rest of the palette */
+      }
+    }
+    try {
+      rootElement.setAttribute("data-theme", theme.mode === "light" ? "light" : "dark");
+    } catch {
+      /* the attribute is a hint for the CSS, not a requirement */
+    }
+  }
+
   // ── boot ───────────────────────────────────────────────────────────────
   function boot() {
     // The panel's commands arrive through the preload: the renderer has no way
@@ -2885,6 +3264,7 @@
     } catch {
       /* an older preload simply means nobody can steer this window */
     }
+    void applyTheme();
     bind();
     // Keyboard shortcuts are window-level: they must work whether focus is on a
     // row, the search box (which keeps its own editing keys) or nothing at all.
@@ -2900,6 +3280,9 @@
   // but never while the user is editing something, because a re-render would
   // discard the half-typed name or note they came back to finish.
   window.addEventListener("focus", () => {
+    // Coming back to the window is also the moment a theme change is most
+    // likely to have happened elsewhere.
+    void applyTheme();
     if (state.phase !== "ready" || state.dialog || state.renaming) return;
     const active = document.activeElement;
     if (active && (active.id === "note-input" || active.id === "tag-input" || active.id === "q")) return;
