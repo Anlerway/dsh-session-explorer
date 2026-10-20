@@ -16,7 +16,7 @@ session store — **without ever touching the physical layout of `~/.dsh`**.
 > | Surface | What it is |
 > |---|---|
 > | **浮窗** (`lib/client.js`) | The full explorer. Opened from the sidebar entry. |
-> | **独立窗口** | The **same panel**, in its own OS window. The window loads the real DSH app (authenticated with a one-shot token) and the plugin opens its panel full-window there, so there is one explorer with two mounts — not two explorers. Falls back to a local read-only overview when the Host cannot mint an authenticated URL. |
+> | **独立窗口** (`assets/detached/`) | The **same explorer UI**, ported class-for-class from `lib/client.js`, in its own frameless OS window. It does not load the DSH app: it is plain DOM (no React, no build step) talking to the same `/session-explorer/api` through the helper preload, which is the only thing holding the token. Same markup, same layout, same icons — only the host adapter differs. |
 >
 > 导出会话 (export to Markdown / JSONL) is the one planned feature that is not built yet;
 > the button says so instead of failing silently.
@@ -48,7 +48,7 @@ lib/
   host/               actions, trash, move, datadir
   component/          browser-component state machine, downloader, installer
   detached/           Electron helper: launcher, main process, preload
-assets/detached/      the overview page loaded inside the helper window
+assets/detached/      the detached window's own page: index.html, shell.css, shell.js
 ```
 
 ## Install (local, out-of-tree)
@@ -124,10 +124,6 @@ Everything answers with one of two envelopes:
 | `GET /component/status`, `/component/events` (SSE), `POST /component/{install,cancel,remove,retry}` | The optional browser component |
 | `POST /detached/{open,focus,close}` | The detached window |
 
-In the detached window the panel is the whole page: it opens on mount, fills the
-viewport, has no scrim, hides the 独立窗口 button, and its close button closes the
-window. Escape does not dismiss it (there would be nothing behind it).
-
 Mutating routes accept an expected revision through `If-Match` or a `revision` field in the
 body; omitting both means last-writer-wins. A stale revision answers `409 revision-conflict`
 and the client reloads instead of clobbering.
@@ -154,6 +150,26 @@ sha256 is checked **before** extraction, and the extracted tree is published by 
 failed install never destroys a working one. Removing the component deletes its marker
 first: whatever survives a locked file is then provably not a usable runtime.
 
+The window is frameless and loads `assets/detached/index.html` from disk; its tab strip is
+the drag region, and the page draws its own minimise / maximise / close. The renderer has no
+network access of its own — `connect-src 'none'` in its CSP — so every request goes through
+`window.se.api(path, init)`, an IPC call that attaches the Host token in the main process
+and only forwards paths under `/session-explorer/api`. The token never reaches the page.
+
+**The UI is a port, not a second design.** `assets/detached/shell.js` mirrors
+`lib/client.js` — the same `.se-shell` / `.trow` / `.row` / `.cmdbar` / `.det-head` markup,
+the same icon table, the same column model, the same context menus — and
+`assets/detached/shell.css` is that panel's stylesheet with exactly two changes at the top:
+the shell fills the window instead of floating as a centred card, and the page supplies the
+`html/body/#root` base. Everything below those two rules is the panel's own CSS, token
+bridge included, so a change to the panel's look is a change to the window's look.
+
+What the window can do is the whole explorer minus the settings page and session creation
+(the Host owns those): three panes with draggable dividers, tabs with per-tab history,
+breadcrumb, sorting, search, filters, batch selection, cut/copy/paste, drag-and-drop moves,
+inline rename, tags, notes, favorites, todos, pin, archive, fork, the bin, and Ctrl+Z for
+the destructive ones.
+
 ## Search
 
 The search box matches the **title, the note and the tags** of a session — the things the
@@ -169,11 +185,25 @@ is what makes it follow the app's light/dark theme and any wallpaper tint automa
 ## Tests
 
 ```bash
-npm test        # node --test: tree, store, settings, data-directory, trash, sessions, move, component
+npm test              # node --test: tree, store, settings, data-directory, trash, sessions, move, component, detached window
+npm run test:render   # the floating panel, rendered against a stub React
 ```
 
 The suites run against temporary directories (`mkdtemp`) and hand-written `paths` objects,
 so they never touch `~/.dsh` or the real sidecars.
+
+`test/detached-shell.test.mjs` is different in kind: it loads the **real** `shell.js` into a
+small DOM (`test/support/dom.mjs` — a parser, event bubbling and just enough element state)
+and drives it with clicks, keystrokes, context menus, checkboxes and drag events. That is the
+only thing standing between a typo in a template string and a window that opens blank, and
+it also pins the API surface: one test parses the Host's route table and fails if the window
+calls a path that is not served.
+
+Two rules the port has to keep, and the tests enforce: the window must never call a route the
+Host does not serve, and it must never render a control the panel does not have. A selector
+that matches an ancestor (the shell itself carries `data-view`) is the classic way a ported
+handler ends up swallowing every click — the tests dispatch real events through the
+delegated listener, so that class of bug fails here rather than in the window.
 
 ## License
 
