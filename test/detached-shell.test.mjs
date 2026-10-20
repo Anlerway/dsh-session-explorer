@@ -90,8 +90,15 @@ export async function boot(options = {}) {
   const bootstrap = options.bootstrap ?? fixture();
   const respond = options.respond ?? (() => ({ ok: true, result: {} }));
 
+  // The panel steers this window through the preload; the harness records the
+  // handler so a test can deliver a command the way main.cjs would.
+  const commands = [];
   window.se = {
     detached: true,
+    onCommand(handler) {
+      commands.push(handler);
+      return () => {};
+    },
     async api(path, init) {
       const call = { path, method: init?.method ?? "GET", body: init?.body ?? null };
       calls.push(call);
@@ -115,7 +122,11 @@ export async function boot(options = {}) {
   const text = () => root.textContent;
   const html = () => root.innerHTML;
 
-  return { document, window, root, calls, storage, $, $$, text, html };
+  const deliver = (command) => {
+    for (const handler of commands) handler(command);
+  };
+
+  return { document, window, root, calls, storage, commands, deliver, $, $$, text, html };
 }
 
 /** Let the queued bootstrap promise and the 200 ms preference timer run. */
@@ -567,6 +578,78 @@ test("an archived row is dimmed but still listed (归档 is visual, not hidden)"
   assert.equal(archived.length, 1, "archived row present");
   assert.ok(archived[0].textContent.includes("旧会话"));
   assert.ok(ctx.text().includes("已归档"), "grouped separately");
+});
+
+// ── the bridge ───────────────────────────────────────────────────────────
+
+test("打开 asks the panel to open the session through the bridge", async () => {
+  const ctx = await boot();
+  await selectRow(ctx, "session-a");
+
+  click(ctx.$('[data-act="open"]'));
+  await settle();
+
+  const command = ctx.calls.find((call) => call.path.endsWith("/bridge/commands"));
+  assert.ok(command, "a bridge command was published");
+  assert.equal(command.method, "POST");
+  assert.equal(command.body.kind, "open-session");
+  assert.equal(command.body.payload.sessionId, "session-a");
+  assert.ok(!ctx.calls.some((call) => call.path.endsWith("/detached/focus")), "no fake focus call");
+});
+
+test("a failed bridge call still leaves the id on the clipboard", async () => {
+  const ctx = await boot({
+    respond: (call) => (call.path.endsWith("/bridge/commands") ? { ok: false, error: "no panel" } : { ok: true, result: {} }),
+  });
+  await selectRow(ctx, "session-a");
+  click(ctx.$('[data-act="open"]'));
+  await settle();
+
+  assert.ok(ctx.text().includes("已复制会话 id"), "the fallback explains itself");
+});
+
+test("新建会话 asks the panel for a session in the current workspace", async () => {
+  const ctx = await boot();
+  click(ctx.$$('[data-node="w-ws-1"]')[0]);
+  await settle(5);
+
+  // 新建 is a menu, as in the panel: the command bar has one entry, not two.
+  click(ctx.$('[data-act="create-menu"]'));
+  await settle(5);
+  click(ctx.$('[data-mi="new-session"]'));
+  await settle();
+
+  const command = ctx.calls.find((call) => call.path.endsWith("/bridge/commands"));
+  assert.ok(command, "a bridge command was published");
+  assert.equal(command.body.kind, "new-session");
+  assert.equal(command.body.payload.workspaceId, "ws-1");
+});
+
+test("a reveal command selects the row, opens its container and switches to its workspace", async () => {
+  const ctx = await boot({ bootstrap: fixture() });
+  // Stand in an unrelated folder first, so the test proves the reveal navigates.
+  click(ctx.$$('[data-node="d-1"]')[0]);
+  await settle(5);
+
+  ctx.deliver({ kind: "reveal", payload: { sessionId: "session-b" } });
+  await settle(5);
+
+  assert.ok(ctx.$("#se-listpane").textContent.includes("C:/work/other"), "the row is in the list");
+  assert.equal(ctx.$$(".row.sel").length, 1, "exactly one row is selected");
+  assert.ok(ctx.$$(".row.sel")[0].getAttribute("data-session"), "the selected row is a session");
+  assert.ok(ctx.text().includes("已定位到"), "the window says what it did");
+  assert.ok(ctx.$(".pane-detail"), "the detail pane is on screen for the revealed row");
+});
+
+test("an unknown command is ignored instead of throwing", async () => {
+  const ctx = await boot();
+  const before = ctx.html();
+
+  assert.doesNotThrow(() => ctx.deliver({ kind: "delete-everything" }));
+  assert.doesNotThrow(() => ctx.deliver({ kind: "reveal", payload: {} }));
+  assert.doesNotThrow(() => ctx.deliver(null));
+
+  assert.equal(ctx.html(), before, "the window did not change");
 });
 
 // ── API surface ──────────────────────────────────────────────────────────

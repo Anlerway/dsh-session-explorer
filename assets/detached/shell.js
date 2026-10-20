@@ -1860,6 +1860,27 @@
     render();
   }
 
+  /**
+   * Where a menu should hang, relative to the button that opened it.
+   *
+   * `getBoundingClientRect` is not universal (a detached element, the test DOM);
+   * a menu anchored at the origin is still usable, so a failure degrades instead
+   * of throwing away the click.
+   */
+  function anchorOf(element, align) {
+    let rect = null;
+    try {
+      rect = element && typeof element.getBoundingClientRect === "function" ? element.getBoundingClientRect() : null;
+    } catch {
+      rect = null;
+    }
+    if (!rect || (!rect.left && !rect.top && !rect.right && !rect.bottom)) {
+      return { left: 12, top: 96 };
+    }
+    const left = align === "right" ? Math.max(8, rect.right - 220) : rect.left;
+    return { left, top: (rect.bottom ?? rect.top ?? 0) + 4 };
+  }
+
   function closeMenu() {
     if (!state.menu) return;
     state.menu = null;
@@ -2039,26 +2060,24 @@
           savePrefs();
           return render();
         case "create-menu": {
-          const element = document.querySelector('[data-act="create-menu"]');
-          if (!element) return undefined;
-          const rect = element.getBoundingClientRect();
+          const anchor = anchorOf(document.querySelector('[data-act="create-menu"]'));
           state.createOpen = !state.createOpen;
-          if (state.createOpen) state.menu = { left: rect.left, top: rect.bottom + 4, items: createMenu() };
+          state.sortOpen = false;
+          state.menu = state.createOpen ? { ...anchor, items: createMenu() } : null;
           return render();
         }
         case "sort-menu": {
-          const element = document.querySelector('[data-act="sort-menu"]');
-          if (!element) return undefined;
-          const rect = element.getBoundingClientRect();
+          const anchor = anchorOf(document.querySelector('[data-act="sort-menu"]'));
           state.sortOpen = !state.sortOpen;
-          if (state.sortOpen) state.menu = { left: rect.left, top: rect.bottom + 4, items: sortMenu() };
+          state.createOpen = false;
+          state.menu = state.sortOpen ? { ...anchor, items: sortMenu() } : null;
           return render();
         }
         case "more-menu": {
-          const element = document.querySelector('[data-act="more-menu"]');
-          if (!element) return undefined;
-          const rect = element.getBoundingClientRect();
-          state.menu = { left: Math.max(8, rect.right - 220), top: rect.bottom + 4, items: moreMenu() };
+          const anchor = anchorOf(document.querySelector('[data-act="more-menu"]'), "right");
+          state.createOpen = false;
+          state.sortOpen = false;
+          state.menu = { ...anchor, items: moreMenu() };
           return render();
         }
         case "toggle-tags":
@@ -2141,12 +2160,24 @@
     setHint("已复制 " + id);
   }
 
-  function openInDsh(session) {
+  /**
+   * 打开 — ask the panel to open the session in DSH.
+   *
+   * This window cannot navigate DSH: `uiWorkspace` lives in the main renderer,
+   * in another process. What it *can* do is publish a command on the Host's
+   * bridge, which the panel listens to; the panel then does the one thing only
+   * it can do. Copying the id stays as the fallback for a panel that is not
+   * running, so the button is never a silent no-op.
+   */
+  async function openInDsh(session) {
     if (!session) return setHint("先选择一个会话");
-    // DSH owns session navigation and this window cannot switch it. Copying the
-    // id and saying so is honest; a button that silently did nothing is not.
-    copyId(session.id);
-    setHint("已复制会话 id，粘贴到 DSH 主窗口的搜索框即可打开");
+    try {
+      await post("/bridge/commands", { kind: "open-session", payload: { sessionId: session.id } });
+      return setHint("已请 DSH 打开这个会话（若面板未打开，id 已复制）");
+    } catch {
+      copyId(session.id);
+      return setHint("已复制会话 id，粘贴到 DSH 主窗口的搜索框即可打开");
+    }
   }
 
   async function reload(refresh) {
@@ -2511,12 +2542,21 @@
     }
   }
 
-  function newSession() {
+  /**
+   * 新建会话 — the same bridge, the other command.
+   *
+   * Session creation belongs to DSH, and only the panel can start one; the
+   * window says *where* rather than pretending it cannot be done at all.
+   */
+  async function newSession() {
     const workspace = nearestWorkspace(state.selectedNode ?? scopeId());
     if (!workspace) return setHint("请先进入一个工作区，再新建会话");
-    // The Host owns session creation; this window has no route for it, so it
-    // points at the app instead of pretending to create one.
-    return setHint("请在 DSH 主窗口新建会话（独立窗口只管理已有会话）");
+    try {
+      await post("/bridge/commands", { kind: "new-session", payload: { workspaceId: workspace.workspaceId } });
+      return setHint("已请 DSH 在「" + (workspace.name ?? workspace.workspaceId) + "」新建会话");
+    } catch {
+      return setHint("请在 DSH 主窗口新建会话（独立窗口只管理已有会话）");
+    }
   }
 
   async function deleteSelection() {
@@ -2782,8 +2822,69 @@
     }
   }
 
+  // ── commands from the panel ────────────────────────────────────────────
+  /**
+   * Handle one bridge command.
+   *
+   * The panel sends these when it wants this window to *show* something:
+   * reveal a session it was told to look at, or rescan because a write landed.
+   * An unknown kind is ignored on purpose — a newer panel talking to an older
+   * window must not throw.
+   */
+  function applyCommand(command) {
+    if (!command || typeof command.kind !== "string") return;
+    const payload = command.payload && typeof command.payload === "object" ? command.payload : {};
+    if (command.kind === "reveal" || command.kind === "open-session") {
+      const session = payload.sessionId ? allSessions().get(payload.sessionId) : null;
+      if (!session) return;
+      revealSession(session);
+      return;
+    }
+    if (command.kind === "refresh") void reload(true);
+  }
+
+  /**
+   * Show one session: switch to its container, select the row and scroll to it.
+   *
+   * `state.tabs` is shared across the window, so this replaces the current tab's
+   * scope rather than opening a fourth one — the user asked to see a session,
+   * not to lose the tab they were working in.
+   */
+  function revealSession(session) {
+    const workspaceNode = Object.values(nodes()).find(
+      (node) => node.workspaceId && node.workspaceId === session.workspaceId,
+    );
+    const target = session.workspaceId ? workspaceNode?.id ?? FIXED.root : FIXED.ungrouped;
+    if (nodeOf(target)) navigate(target);
+    state.selected = session.id;
+    state.selectedNode = null;
+    state.checked.clear();
+    // A hidden detail pane would leave the user staring at the row they asked
+    // about with nowhere to read it.
+    state.showDetail = true;
+    render();
+    scrollSelectedIntoView();
+    setHint("已定位到「" + (session.displayTitle ?? session.id) + "」");
+  }
+
+  function scrollSelectedIntoView() {
+    try {
+      const row = document.querySelector('[data-session="' + state.selected + '"]');
+      if (row && typeof row.scrollIntoView === "function") row.scrollIntoView({ block: "center" });
+    } catch {
+      /* scrolling is a nicety */
+    }
+  }
+
   // ── boot ───────────────────────────────────────────────────────────────
   function boot() {
+    // The panel's commands arrive through the preload: the renderer has no way
+    // to listen on the Host's event stream (connect-src is 'none').
+    try {
+      if (window.se && typeof window.se.onCommand === "function") window.se.onCommand(applyCommand);
+    } catch {
+      /* an older preload simply means nobody can steer this window */
+    }
     bind();
     // Keyboard shortcuts are window-level: they must work whether focus is on a
     // row, the search box (which keeps its own editing keys) or nothing at all.

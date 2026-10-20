@@ -123,6 +123,8 @@ Everything answers with one of two envelopes:
 | `GET /datadir`, `POST /datadir/inspect`, `POST /datadir/migrate` | Describe, pre-flight and perform the data-directory move |
 | `GET /component/status`, `/component/events` (SSE), `POST /component/{install,cancel,remove,retry}` | The optional browser component |
 | `POST /detached/{open,focus,close}` | The detached window |
+| `POST /detached/reveal` | Bring the window forward and select one session in it |
+| `POST /bridge/commands`, `GET /bridge/events` (SSE) | The panel ↔ window command bus |
 
 Mutating routes accept an expected revision through `If-Match` or a `revision` field in the
 body; omitting both means last-writer-wins. A stale revision answers `409 revision-conflict`
@@ -164,11 +166,37 @@ the shell fills the window instead of floating as a centred card, and the page s
 `html/body/#root` base. Everything below those two rules is the panel's own CSS, token
 bridge included, so a change to the panel's look is a change to the window's look.
 
-What the window can do is the whole explorer minus the settings page and session creation
-(the Host owns those): three panes with draggable dividers, tabs with per-tab history,
-breadcrumb, sorting, search, filters, batch selection, cut/copy/paste, drag-and-drop moves,
-inline rename, tags, notes, favorites, todos, pin, archive, fork, the bin, and Ctrl+Z for
-the destructive ones.
+What the window can do is the whole explorer minus the settings page: three panes with
+draggable dividers, tabs with per-tab history, breadcrumb, sorting, search, filters, batch
+selection, cut/copy/paste, drag-and-drop moves, inline rename, tags, notes, favorites, todos,
+pin, archive, fork, the bin, and Ctrl+Z for the destructive ones.
+
+### The bridge (panel ↔ window)
+
+Two documents, two processes, one Host — and neither side can call the other directly. The
+panel runs inside DSH and is the only place that holds `uiWorkspace`; the window runs on a
+`file://` page whose CSP is `connect-src 'none'` and has no DSH context at all. So the Host
+carries the two directions (see `lib/host/bridge.js`):
+
+```
+window  --POST /bridge/commands-->  Host  --SSE /bridge/events-->  panel
+panel   --POST /detached/reveal-->  Host  --control socket-->      window
+```
+
+A command is fire-and-forget: an in-memory ring buffer (64 entries, 30 s lifetime), a cursor
+per consumer, and no acknowledgement. That is deliberate — a command whose recipient is not
+listening must be *dropped*, not failed, because the user can always click again, and
+replaying yesterday's "open session" after a restart would move the view unasked.
+
+| Direction | Kind | What it buys |
+|---|---|---|
+| window → panel | `open-session` | 打开 in the window now really opens the session in DSH: the window publishes, the panel opens itself and calls `uiWorkspace.openSession` |
+| window → panel | `new-session` | 新建会话 in the window starts a draft in the current workspace |
+| panel → window | `reveal` | "show me this session over there": the window switches to its workspace, selects the row, opens the detail pane and scrolls to it |
+| Host → panel | `window-open` / `window-closed` | The panel knows whether 独立窗口 is on screen without polling |
+
+The panel keeps the id-copy fallback: with no panel listening (it is closed, or an older
+build), 打开 copies the session id and says so rather than pretending.
 
 ## Search
 
@@ -191,6 +219,10 @@ npm run test:render   # the floating panel, rendered against a stub React
 
 The suites run against temporary directories (`mkdtemp`) and hand-written `paths` objects,
 so they never touch `~/.dsh` or the real sidecars.
+
+`test/bridge.test.mjs` covers the bus on its own: cursors, the ring buffer, stale commands,
+a listener that throws, and the payload normaliser that refuses an unknown kind instead of
+fanning it out.
 
 `test/detached-shell.test.mjs` is different in kind: it loads the **real** `shell.js` into a
 small DOM (`test/support/dom.mjs` — a parser, event bubbling and just enough element state)
