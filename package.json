@@ -8,7 +8,8 @@
   },
   "main": "./lib/index.js",
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "test:render": "node test/render-smoke.mjs"
   },
   "exports": {
     ".": "./lib/index.js",
