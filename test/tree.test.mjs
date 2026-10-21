@@ -350,6 +350,78 @@ test("ancestorsOf and nearestWorkspace follow the chain", () => {
   assert.equal(nearestWorkspace("d-a", tree), null);
 });
 
+// ── the counts the badges show ──────────────────────────────────────────────
+//
+// A badge has to match the number of rows the list actually renders, or the
+// number is a lie the user can see. The three cases below were all wrong.
+
+test("收藏 / 待办 count their shortcut rows as well as the flagged sessions", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: {
+      // Two references into 收藏 (one session, one folder) next to s2's flag.
+      shortcuts: {
+        "s-one": { kind: "session", targetId: "s1", parent: FIXED_NODES.favorites, order: 0 },
+        "s-two": { kind: "folder", targetId: "d-work", parent: FIXED_NODES.favorites, order: 1 },
+      },
+      folders: { "d-work": { id: "d-work", name: "工作", parent: FIXED_NODES.root, order: 0 } },
+    },
+  });
+  // 1 flagged session + 2 rows pointing into the container = 3 rows on screen.
+  assert.equal(tree.counts[FIXED_NODES.favorites], 3);
+  assert.equal(tree.children[FIXED_NODES.favorites].length, 2, "two shortcut rows");
+  assert.equal(tree.counts[FIXED_NODES.todos], 1, "待办 has no shortcuts here");
+});
+
+test("a folder keeps the sessions placed directly in it when it aggregates", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: {
+      folders: {
+        "d-own": { id: "d-own", name: "自己的", parent: FIXED_NODES.root, order: 0 },
+        "d-sub": { id: "d-sub", name: "下级", parent: "d-own", order: 0 },
+      },
+      // A stale placement can name a folder; the folder must not lose it.
+      sessionPlacement: { s4: "d-own" },
+      placement: { wa: "d-sub" },
+    },
+  });
+  assert.equal(tree.counts["d-sub"], 2, "wa's two sessions");
+  // s4 sits directly in d-own, and d-sub adds two more: assigning instead of
+  // adding used to report 2 here and lose s4 entirely.
+  assert.equal(tree.counts["d-own"], 3);
+});
+
+test("a shortcut row never contributes to the container it sits in", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: {
+      folders: { "d-box": { id: "d-box", name: "盒子", parent: FIXED_NODES.root, order: 0 } },
+      placement: { wa: "d-box" },
+      shortcuts: { "s-ref": { kind: "session", targetId: "s2", parent: "d-box", order: 0 } },
+    },
+  });
+  // wa holds s1+s2; the reference row is a row, not two more sessions.
+  assert.equal(tree.counts["d-box"], 2);
+});
+
+test("a folder created inside 未分组 stays there", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: { folders: { "d-in": { id: "d-in", name: "在未分组里", parent: FIXED_NODES.ungrouped, order: 0 } } },
+  });
+  // The three rules used to disagree: the host accepted the folder, the tree
+  // re-parented it to the root, and canMove refused to put it back.
+  assert.equal(tree.nodes["d-in"].parent, FIXED_NODES.ungrouped);
+  assert.ok(tree.children[FIXED_NODES.ungrouped].includes("d-in"));
+  assert.equal(canMove("d-in", FIXED_NODES.ungrouped, tree).ok, true, "and it may move back");
+  assert.equal(canMove("d-in", FIXED_NODES.favorites, tree).ok, false, "but not into a reference bin");
+});
+
 test("trashed sessions leave the live views and appear only in the trash", () => {
   const tree = buildAutoTree({ registry, sessions, trashedIds: ["s1"] });
   const view = { sessions };

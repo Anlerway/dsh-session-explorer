@@ -65,6 +65,71 @@ test("createShortcut refuses an unknown kind or an empty target", () => {
   assert.throws(() => createShortcut({}, { kind: "session", targetId: "  " }, ids()), /targetId is required/);
 });
 
+// ── the host validates the parent against the real tree ────────────────────
+//
+// Before, the only guard was "not 根目录 / 所有会话 / 回收站". A parent that did not
+// exist, or that was itself a shortcut, was accepted and written — and the tree
+// then re-parented the row to the root at render time, or dropped it somewhere
+// invisible. These are the cases that used to get through.
+
+const treeFixture = () => ({
+  nodes: {
+    "f-root": { id: "f-root", kind: "root", name: "根目录", fixed: true },
+    "f-all": { id: "f-all", kind: "all", name: "所有会话", fixed: true },
+    "f-favorites": { id: "f-favorites", kind: "favorites", name: "收藏", fixed: true },
+    "f-todos": { id: "f-todos", kind: "todos", name: "待办", fixed: true },
+    "f-ungrouped": { id: "f-ungrouped", kind: "ungrouped", name: "未分组", fixed: true },
+    "f-trash": { id: "f-trash", kind: "trash", name: "回收站", fixed: true },
+    "d-work": { id: "d-work", kind: "folder", name: "工作", type: "folder" },
+    "w-wa": { id: "w-wa", kind: "workspace", name: "Alpha", type: "workspace", workspaceId: "wa" },
+    "s-old": { id: "s-old", kind: "shortcut", type: "shortcut" },
+  },
+});
+
+test("createShortcut refuses a parent the tree does not have, or that is a reference", () => {
+  const tree = treeFixture();
+  const next = ids();
+
+  assert.throws(
+    () => createShortcut({}, { kind: "session", targetId: "s1", parent: "d-missing" }, next, tree),
+    /unknown parent/,
+  );
+  assert.throws(
+    () => createShortcut({}, { kind: "session", targetId: "s1", parent: "s-old" }, next, tree),
+    /不能放在快捷方式里/,
+  );
+  assert.throws(
+    () => createShortcut({}, { kind: "session", targetId: "s1", parent: "session-xyz" }, next, tree),
+    /unknown parent/,
+  );
+  // A real container still works, including the fixed ones that hold references.
+  for (const parent of ["d-work", "w-wa", FIXED_NODES.favorites, FIXED_NODES.todos, FIXED_NODES.ungrouped]) {
+    assert.doesNotThrow(
+      () => createShortcut({}, { kind: "session", targetId: "s1", parent }, ids(), tree),
+      `${parent} may hold a reference`,
+    );
+  }
+});
+
+test("createShortcut refuses a folder or workspace target that is not in the tree", () => {
+  const tree = treeFixture();
+  const next = ids();
+  assert.throws(
+    () => createShortcut({}, { kind: "folder", targetId: "d-gone", parent: FIXED_NODES.favorites }, next, tree),
+    /没有可以指向的文件夹/,
+  );
+  assert.throws(
+    () => createShortcut({}, { kind: "workspace", targetId: "gone", parent: FIXED_NODES.todos }, next, tree),
+    /没有可以指向的工作区/,
+  );
+  assert.doesNotThrow(
+    () => createShortcut({}, { kind: "folder", targetId: "d-work", parent: FIXED_NODES.favorites }, ids(), tree),
+  );
+  assert.doesNotThrow(
+    () => createShortcut({}, { kind: "workspace", targetId: "wa", parent: FIXED_NODES.todos }, ids(), tree),
+  );
+});
+
 test("deleteShortcut removes the reference only", () => {
   const draft = {};
   const id = createShortcut(draft, { kind: "workspace", targetId: "ws-1", parent: FIXED_NODES.favorites }, ids());
