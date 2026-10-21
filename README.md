@@ -123,7 +123,7 @@ Everything answers with one of two envelopes:
 | `POST /sessions/placement` | Show sessions in another container without moving them (see below) |
 | `POST /workspaces/:id/delete`, `POST /workspaces/:id/reveal`, `POST /reveal-path` | Drop a workspace registration (files and sessions survive), reveal a workspace or any verified path in the OS file manager |
 | `GET /export?sessionId&format=md\|jsonl` | The session as a file. Answers with the body, not an envelope |
-| `GET /theme`, `POST /theme` | The 14 `--dsw-alias-*` tokens the panel can see, so the detached window can paint itself |
+| `GET /theme`, `POST /theme` | The 25 `--dsw-alias-*` tokens the panel can see — backgrounds, the four label steps, brand/link, borders, fills and state colours — so the detached window can paint itself |
 | `GET /settings`, `PUT /settings` | Preferences; `PUT` takes a partial document and drops unknown keys |
 | `POST /sessions/:id/rename` | DSH's own rename — appends a `session/title` event, no sidecar write |
 | `POST /workspaces/:id/rename` | Rename a workspace through the registry |
@@ -241,8 +241,8 @@ sessions, not copies of them:
 
 | Entry | Holds | Accepts a drop |
 |---|---|---|
-| 根目录 | The directory tree: folders, workspaces, and the sessions *placed* in them | Folders, workspaces |
-| 所有会话 | The flat list of every live session | — |
+| 根目录 | The directory of the tree — folders and workspaces. It is a *place*, not a list, so it shows no session rows of its own | Folders, workspaces |
+| 所有会话 | The flat list of every live session. Each row is a **reference**: it wears the shortcut badge and its menu can jump back to where the session really lives | — |
 | 未分组 | Real sessions that belong to no workspace node — including ones pulled out of a workspace by a virtual placement; folders may live here too | Sessions, folders, workspaces |
 | 回收站 | Trashed sessions only. The toolbar drops cut/copy/paste/rename/收藏/待办/置顶/归档/分叉: a bin can restore and delete, nothing else | — |
 | 待办 / 收藏 | **Shortcuts** to sessions, folders and workspaces. Dropping here creates a reference and never moves the target | Anything, as a shortcut |
@@ -256,6 +256,25 @@ Right-clicking a row inside a multi-selection acts on the whole selection and of
 复制 / 剪切 / 粘贴 / 删除 — a bulk edit of tags or notes across unrelated rows would apply
 one row's values to all of them.
 
+### Shortcuts
+
+A shortcut is a reference to something that stays where it is (hard constraint 5). It can be
+created in **any real container** — a folder, a workspace, 收藏, 待办 or 未分组 — by dragging a
+session or a node onto it, by 发送到 in a row menu, or by dropping onto a folder, which
+takes the drop *as* a shortcut instead of moving anything. 根目录, 所有会话 and 回收站 are views,
+so they refuse to hold one. Dragging works the same in the list and in the tree: a session
+dropped on a folder becomes a reference in both, and dropping one on a shortcut is refused
+rather than nesting a reference inside a reference.
+
+发送到 is one flyout with the three destinations — 收藏, 待办, and *the container you are
+standing in* (falling back to 收藏 from a view). The parent row is a label, not a command: it
+opens on hover and carries no action of its own. Shortcut rows are drawn apart from the things
+they point at: a dashed underline, the shortcut glyph in place of the object's own icon, a
+快捷方式 tag in the list, and a menu whose first item is 跳转到原位置.
+
+删除 a shortcut removes the reference only; the original is never touched. Deleting the
+*original* leaves the shortcut in place, pointing at something that is gone.
+
 ## Search
 
 The search box matches the **title, the note and the tags** of a session — the things the
@@ -267,6 +286,17 @@ zstd frame streams is a different product, and DSH's own UI is the place for tha
 The panel never hard-codes a colour. Every colour is a DSH alias token
 (`--dsw-alias-bg-layer-1`, `--dsw-alias-border-l2`, `--dsw-alias-label-primary`, …), which
 is what makes it follow the app's light/dark theme and any wallpaper tint automatically.
+
+The detached window lives on `file://`, where none of those tokens exist, so the panel reports
+them: 25 of them, covering the four background layers, all four label steps (the text colours —
+`label-primary` through `label-quaternary`, plus inverted and error), brand and link, four border
+levels, two fills and the state colours. DSH declares its aliases as `var(…)` and `color-mix(…)`,
+which are meaningless outside the app, so each token is read through a hidden probe element
+(`color: var(--token)`) and reported as a concrete `rgb(…)`.
+
+`mode` is *derived* from the reported `bg-layer-1` luminance rather than from an attribute —
+DSH never sets `data-theme` — so the window's native scrollbars and form controls match the
+surface they sit on. The window repaints on boot and again on every focus.
 
 No `backdrop-filter` and no darkening layer anywhere: with a wallpaper behind the panel,
 a blur would smear the image and a scrim would dim it (hard constraint 10). The scrim

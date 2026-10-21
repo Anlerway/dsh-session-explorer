@@ -27,6 +27,7 @@ export function fixture(overrides = {}) {
     tree: {
       nodes: {
         "f-root": { id: "f-root", type: "folder", kind: "root", name: "根目录", fixed: true, parent: null },
+        "f-all": { id: "f-all", type: "folder", kind: "all", name: "所有会话", fixed: true, parent: "f-root" },
         "f-favorites": { id: "f-favorites", type: "folder", kind: "favorites", name: "收藏", fixed: true, parent: "f-root" },
         "f-todos": { id: "f-todos", type: "folder", kind: "todos", name: "待办", fixed: true, parent: "f-root" },
         "f-ungrouped": { id: "f-ungrouped", type: "folder", kind: "ungrouped", name: "未分组", fixed: true, parent: "f-root" },
@@ -40,11 +41,12 @@ export function fixture(overrides = {}) {
       },
       children: {
         "f-root": ["d-1", "w-ws-1"],
+        "f-all": [],
         "d-1": ["d-2"],
         "d-2": [],
         "w-ws-1": [],
       },
-      counts: { "f-root": 3, "f-ungrouped": 0, "f-favorites": 1, "f-todos": 1, "f-trash": 0, "d-1": 0, "d-2": 0, "w-ws-1": 3 },
+      counts: { "f-root": 3, "f-all": 3, "f-ungrouped": 0, "f-favorites": 1, "f-todos": 1, "f-trash": 0, "d-1": 0, "d-2": 0, "w-ws-1": 3 },
     },
     sessions: [
       {
@@ -122,6 +124,15 @@ export async function boot(options = {}) {
   const text = () => root.textContent;
   const html = () => root.innerHTML;
 
+  // 根目录 is a directory: its list holds 所有会话 and the containers, not the
+  // session rows. Most tests are about rows, so the harness steps into the flat
+  // list unless a test asks to stay where the window opens.
+  if (options.keepScope !== true) {
+    const flat = root.querySelector('[data-node="f-all"]');
+    if (flat) click(flat);
+    await settle(5);
+  }
+
   const deliver = (command) => {
     for (const handler of commands) handler(command);
   };
@@ -171,12 +182,18 @@ test("the tree mirrors the panel: fixed rail, then the directory walk", async ()
 });
 
 test("the list groups pinned, folders, workspaces, sessions and archived", async () => {
+  // The directory groups belong to 根目录 (which lists containers), the session
+  // groups to 所有会话 (which lists rows). One scope cannot show both, because
+  // 根目录 no longer holds sessions of its own.
+  const atRoot = await boot({ keepScope: true });
+  const rootGroups = atRoot.$$(".grp").map((node) => node.textContent);
+  assert.ok(rootGroups.some((text) => text.includes("特殊文件夹")), "special-folders group");
+  assert.ok(rootGroups.some((text) => text.includes("文件夹")), "folder group");
+  assert.ok(rootGroups.some((text) => text.includes("工作区")), "workspace group");
+
   const ctx = await boot();
   const groups = ctx.$$(".grp").map((node) => node.textContent);
-
   assert.ok(groups.some((text) => text.includes("置顶")), "pinned group");
-  assert.ok(groups.some((text) => text.includes("文件夹")), "folder group");
-  assert.ok(groups.some((text) => text.includes("工作区")), "workspace group");
   assert.ok(groups.some((text) => text.includes("已归档")), "archived group sinks last");
   assert.ok(ctx.text().includes("先看排序"), "note column");
   // The mini DOM matches simple selectors only, so count through the row.
@@ -188,16 +205,21 @@ test("a row shows its status dot and the container rows show a type tag", async 
   const running = ctx.$('[data-session="session-b"]');
   assert.ok(running.textContent.includes("运行中"), "running status");
   assert.ok(running.querySelector(".dot.run"), "running dot");
-  assert.ok(ctx.$('[data-id="w-ws-1"]').textContent.includes("工作区"), "workspace type tag");
-  assert.ok(ctx.$('[data-id="d-1"]').textContent.includes("文件夹"), "folder type tag");
+  // The container rows live in 根目录, the session rows in 所有会话.
+  const atRoot = await boot({ keepScope: true });
+  assert.ok(atRoot.$('[data-id="w-ws-1"]').textContent.includes("工作区"), "workspace type tag");
+  assert.ok(atRoot.$('[data-id="d-1"]').textContent.includes("文件夹"), "folder type tag");
 });
 
 test("the detail pane describes the scope when nothing is selected", async () => {
-  const ctx = await boot();
-  const detail = ctx.$(".pane-detail").textContent;
-
+  const atRoot = await boot({ keepScope: true });
+  const detail = atRoot.$(".pane-detail").textContent;
   assert.ok(detail.includes("根目录"), "scope name in detail");
   assert.ok(detail.includes("全部会话"), "root is described as the whole set");
+
+  // Inside 所有会话 the pane names that view instead.
+  const flat = await boot();
+  assert.ok(flat.$(".pane-detail").textContent.includes("所有会话"), "flat list names itself");
 });
 
 test("a connection failure renders a retry affordance, not a blank window", async () => {
@@ -220,8 +242,12 @@ test("a connection failure renders a retry affordance, not a blank window", asyn
 
 // ── menus, rename, breadcrumb, column widths ─────────────────────────────
 
-test("right-clicking a row opens the panel's context menu", async () => {
+test("right-clicking a row inside a workspace opens the panel's context menu", async () => {
   const ctx = await boot();
+  // 所有会话 draws its rows as references and gets the smaller menu, so the
+  // full session menu is checked where the session really lives.
+  click(ctx.$$('[data-node="w-ws-1"]')[0]);
+  await settle(5);
   contextMenu(ctx.$$('[data-session="session-a"]')[0], 60, 80);
   await settle(5);
 
@@ -230,6 +256,69 @@ test("right-clicking a row opens the panel's context menu", async () => {
   for (const label of ["重命名", "收藏", "剪切", "复制", "粘贴", "删除"]) {
     assert.ok(menu.textContent.includes(label), "menu offers " + label);
   }
+});
+
+test("所有会话 draws each row as a reference with the smaller menu", async () => {
+  const ctx = await boot();
+  assert.ok(ctx.$$(".ref-row").length > 0, "reference rows wear their own class");
+
+  contextMenu(ctx.$$('[data-session="session-a"]')[0], 60, 80);
+  await settle(5);
+
+  const menu = ctx.$(".ctxmenu");
+  assert.ok(menu, "menu rendered");
+  assert.ok(menu.textContent.includes("跳转到原位置"), "menu offers the jump");
+  assert.ok(!menu.textContent.includes("重命名"), "a view cannot rename the original");
+});
+
+// 发送到: the three "hand this row to a container" commands are one hover
+// flyout now. The parent is a label (no data-mi, so its click cannot run), the
+// children are ordinary [data-mi] rows inside .submenu, and the click path is
+// the one that already existed — no new event branch.
+test("the session menu folds 收藏 / 待办 / 创建快捷方式 into one 发送到 flyout", async () => {
+  const ctx = await boot();
+  click(ctx.$$('[data-node="w-ws-1"]')[0]);
+  await settle(5);
+  contextMenu(ctx.$$('[data-session="session-a"]')[0], 60, 80);
+  await settle(5);
+
+  const menu = ctx.$(".ctxmenu");
+  assert.ok(menu, "menu rendered");
+  assert.ok(menu.textContent.includes("发送到"), "the parent row is labelled 发送到");
+  assert.ok(!menu.textContent.includes("添加到收藏"), "the flat rows are gone");
+
+  const parent = ctx.$(".mi.has-sub");
+  assert.ok(parent, "the parent wears has-sub");
+  assert.equal(parent.getAttribute("data-mi"), null, "a parent is not a command");
+  assert.equal(parent.getAttribute("aria-haspopup"), "true", "the parent advertises its flyout");
+  const chevron = parent.querySelector(".k");
+  assert.ok(chevron && chevron.innerHTML.includes("svg"), "the chevron sits in the .k slot");
+
+  const flyout = parent.querySelector(".submenu");
+  assert.ok(flyout, "the flyout is inside the parent");
+  for (const id of ["add-favorite", "add-todo", "create-shortcut"]) {
+    assert.ok(flyout.querySelector('[data-mi="' + id + '"]'), "flyout offers " + id);
+  }
+  assert.ok(flyout.querySelector(".misep"), "the separator survives inside the flyout");
+
+  // The click path is unchanged: a child id runs through runMenuAction.
+  click(flyout.querySelector('[data-mi="add-favorite"]'));
+  await settle(5);
+  assert.ok(ctx.calls.some((call) => call.path.endsWith("/shortcuts") && call.method === "POST"), "the child posts a shortcut");
+
+  // A menu pinned to the right edge flips its flyout left, or the flyout would
+  // land outside the window where nobody can reach it.
+  contextMenu(ctx.$$('[data-session="session-a"]')[0], 1270, 80);
+  await settle(5);
+  const edgeMenu = ctx.$(".ctxmenu");
+  assert.ok(edgeMenu, "menu rendered at the edge");
+  assert.equal(edgeMenu.getAttribute("data-flip"), "1", "a right-edge menu flips its flyouts");
+  assert.equal(ctx.$(".mi.has-sub").getAttribute("data-mi"), null, "the parent is still not a command");
+
+  // The same menu away from the edge keeps the default (right-opening) flyout.
+  contextMenu(ctx.$$('[data-session="session-a"]')[0], 60, 80);
+  await settle(5);
+  assert.equal(ctx.$(".ctxmenu").getAttribute("data-flip"), null, "a left-side menu does not flip");
 });
 
 test("the pencil starts an inline rename and Enter posts the new title", async () => {
@@ -286,7 +375,10 @@ test("the breadcrumb shows the path and navigates back to an ancestor", async ()
 
 test("dragging a column handle widens the column and remembers it", async () => {
   const ctx = await boot();
-  const handle = ctx.$('[data-cw="tags"]');
+  // The strip has its own attribute: the list pane owns `data-cw` (the column
+  // width *mode*), and matching that from inside the pane started a resize on
+  // every press.
+  const handle = ctx.$('[data-colrz="tags"]');
   assert.ok(handle, "resize handle rendered");
   handle.dispatchEvent(new Event("mousedown", { bubbles: true, target: handle, clientX: 300, clientY: 40 }));
   ctx.document.dispatchEvent(new Event("mousemove", { bubbles: false, clientX: 360, clientY: 40 }));
@@ -410,7 +502,7 @@ test("dragging a session onto a workspace row moves it there", async () => {
   assert.ok(!ctx.html().includes("trow drop"), "highlight cleared");
 });
 
-test("a session cannot be dropped on a folder", async () => {
+test("a session dropped on a folder becomes a shortcut and does not move", async () => {
   const ctx = await boot();
   const row = ctx.$$('[data-session="session-b"]')[0];
   row.dispatchEvent(new Event("dragstart", { bubbles: true, target: row, dataTransfer: { setData() {}, effectAllowed: "" } }));
@@ -420,9 +512,18 @@ test("a session cannot be dropped on a folder", async () => {
   const over = new Event("dragover", { bubbles: true, target, dataTransfer: { dropEffect: "" } });
   target.dispatchEvent(over);
   await settle(5);
+  assert.ok(over.defaultPrevented, "folder accepts the drop as a reference");
+  assert.ok(target.classList.contains("drop"), "drop target highlighted");
 
-  assert.ok(!over.defaultPrevented, "folder refuses a session drop");
-  assert.ok(!target.classList.contains("drop"), "no highlight on an illegal target");
+  target.dispatchEvent(new Event("drop", { bubbles: true, target, dataTransfer: { dropEffect: "move" } }));
+  await settle();
+
+  const shortcut = ctx.calls.find((call) => call.path.endsWith("/shortcuts"));
+  assert.ok(shortcut, "a shortcut request was sent");
+  assert.equal(shortcut.body.parent, "d-1");
+  assert.equal(shortcut.body.kind, "session");
+  assert.equal(shortcut.body.targetId, "session-b");
+  assert.ok(!ctx.calls.some((call) => call.path.endsWith("/move")), "the session did not move");
 });
 
 test("Ctrl+T opens a tab, Ctrl+W closes it and Ctrl+1 returns to the first", async () => {

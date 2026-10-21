@@ -122,12 +122,9 @@ test("scope: 所有会话 is the flat list, the root is the directory tree", () 
     sessionsOfNode(FIXED_NODES.all, view, tree).map((session) => session.id).sort(),
     sessions.map((session) => session.id).sort(),
   );
-  // The root lists the sessions of the workspaces below it; 未分组 is a sibling
-  // container, so its session is not part of the root's list.
-  assert.deepEqual(
-    sessionsOfNode(FIXED_NODES.root, view, tree).map((session) => session.id).sort(),
-    sessions.filter((session) => session.workspaceId).map((session) => session.id).sort(),
-  );
+  // 根目录 is a directory, not a list: it shows folders, workspaces and the
+  // 所有会话 view, and holds no session rows of its own.
+  assert.deepEqual(sessionsOfNode(FIXED_NODES.root, view, tree), []);
   assert.deepEqual(
     sessionsOfNode(FIXED_NODES.ungrouped, view, tree).map((session) => session.id),
     ["s4"],
@@ -138,8 +135,8 @@ test("scope follows the selection", () => {
   const tree = buildAutoTree({ registry, sessions });
   const view = { sessions };
   const ids = (nodeId) => sessionsOfNode(nodeId, view, tree).map((s) => s.id);
-  // 根目录 lists what lives in its directories; the flat list is 所有会话.
-  assert.deepEqual(ids(FIXED_NODES.root), ["s1", "s2", "s3"]);
+  // 根目录 lists no sessions at all; the flat list is 所有会话.
+  assert.deepEqual(ids(FIXED_NODES.root), []);
   assert.deepEqual(ids(FIXED_NODES.all), ["s1", "s2", "s3", "s4"]);
   assert.deepEqual(ids(workspaceNodeId("wa")), ["s1", "s2"]);
   assert.deepEqual(ids(FIXED_NODES.ungrouped), ["s4"]);

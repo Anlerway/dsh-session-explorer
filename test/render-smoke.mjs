@@ -254,6 +254,7 @@ console.log("ContainerRow (special) ok:", Boolean(specialRow));
 const tree = {
   nodes: {
     "f-root": { id: "f-root", type: "folder", name: "根目录", fixed: true, kind: "root", parent: null, order: 0 },
+    "f-all": { id: "f-all", type: "folder", name: "所有会话", fixed: true, kind: "all", parent: "f-root", order: 1 },
     "f-trash": { id: "f-trash", type: "folder", name: "回收站", fixed: true, kind: "trash", parent: null, order: 1 },
     "f-ungrouped": { id: "f-ungrouped", type: "folder", name: "未分组", fixed: true, kind: "ungrouped", parent: "f-root", order: 1 },
     "f-todos": { id: "f-todos", type: "folder", name: "待办", fixed: true, kind: "todos", parent: "f-root", order: 2 },
@@ -262,10 +263,10 @@ const tree = {
     "d-1": { id: "d-1", type: "folder", name: "文件夹", fixed: false, kind: "folder", parent: "f-root", order: 3 },
   },
   children: {
-    "f-root": ["w-ws-1", "d-1", "f-ungrouped", "f-todos", "f-favorites"],
-    "f-trash": [], "f-ungrouped": [], "f-todos": [], "f-favorites": [], "w-ws-1": [], "d-1": [],
+    "f-root": ["f-all", "w-ws-1", "d-1", "f-ungrouped", "f-todos", "f-favorites"],
+    "f-trash": [], "f-all": [], "f-ungrouped": [], "f-todos": [], "f-favorites": [], "w-ws-1": [], "d-1": [],
   },
-  counts: { "f-root": 1, "f-trash": 0, "f-ungrouped": 0, "f-todos": 0, "f-favorites": 0, "w-ws-1": 1, "d-1": 0 },
+  counts: { "f-root": 1, "f-all": 1, "f-trash": 0, "f-ungrouped": 0, "f-todos": 0, "f-favorites": 0, "w-ws-1": 1, "d-1": 0 },
   roots: ["f-root", "f-trash"],
 };
 console.log("TreePane ok:", Boolean(render({
@@ -297,8 +298,9 @@ const wsRows = findAll(rootList, hasClass("wsrow"));
 if (wsRows.length !== 1) throw new Error("the workspace must still be listed, got " + wsRows.length);
 if (textOf(wsRows[0]).includes("文件夹")) throw new Error("a workspace row must not be labelled 文件夹");
 const specialRows = findAll(rootList, hasClass("specialrow"));
-// 未分组 / 收藏 / 待办 — and deliberately NOT 根目录: you are already in it.
-if (specialRows.length !== 3) throw new Error("根目录 must list the three 特殊文件夹, got " + specialRows.length);
+// 所有会话 / 未分组 / 收藏 / 待办 — and deliberately NOT 根目录: you are already in
+// it. 所有会话 belongs here because 根目录 itself lists no session rows.
+if (specialRows.length !== 4) throw new Error("根目录 must list the four 特殊文件夹, got " + specialRows.length);
 if (findAll(rootList, hasClass("specialrow")).some((row) => textOf(row).includes("根目录"))) {
   throw new Error("根目录 must not list itself");
 }
@@ -363,14 +365,66 @@ console.log("FilterDialog open ok:", Boolean(render({
   },
 })));
 console.log("FilterDialog closed ok:", render({ type: FilterDialog, props: { open: false, value: { favorite: "all", archived: "all", todo: "all", tags: [] }, library: [], onApply: noop, onClose: noop } }) === null);
-console.log("CommandMenu ok:", Boolean(render({
+const plainMenu = render({
   type: CommandMenu,
   props: {
     anchor: { left: 400, bottom: 300, element: null },
     items: [{ label: "刷新", icon: "refresh", run: noop }, { sep: true }, { label: "撤销", run: noop }],
     onClose: noop,
   },
-})));
+});
+console.log("CommandMenu ok:", Boolean(plainMenu));
+if (findAll(plainMenu, hasClass("has-sub")).length > 0) throw new Error("a flat menu must not grow a flyout");
+
+// 发送到: a parent with `sub` is a label, not a command. It carries has-sub and
+// aria-haspopup, its .k slot holds the chevron instead of a shortcut key, and
+// the children live inside .submenu as ordinary .mi rows (separators included).
+const subMenu = render({
+  type: CommandMenu,
+  props: {
+    anchor: { left: 400, bottom: 300, element: null },
+    items: [
+      { label: "发送到", icon: "shortcut", sub: [
+        { label: "收藏", icon: "star", run: noop },
+        { label: "待办", icon: "todo", run: noop },
+        { sep: true },
+        { label: "创建快捷方式（放到收藏）", icon: "shortcut", run: noop },
+      ] },
+      { label: "删除", icon: "trash", danger: true, run: noop },
+    ],
+    onClose: noop,
+  },
+});
+const parents = findAll(subMenu, hasClass("has-sub"));
+if (parents.length !== 1) throw new Error("the 发送到 parent must be the only has-sub row");
+const parent = parents[0];
+if (parent.props["aria-haspopup"] !== "true") throw new Error("a flyout parent advertises aria-haspopup");
+if (typeof parent.props.onClick === "function") parent.props.onClick();
+const flyout = findAll(parent, hasClass("submenu"))[0] ?? null;
+if (!flyout) throw new Error("the parent must contain a .submenu");
+const children = findAll(flyout, hasClass("mi"));
+if (children.length !== 3) throw new Error("the flyout must hold three items, got " + children.length);
+if (findAll(flyout, hasClass("misep")).length !== 1) throw new Error("a sep inside sub becomes a .misep");
+if (!textOf(flyout).includes("收藏") || !textOf(flyout).includes("创建快捷方式")) throw new Error("the flyout labels must render");
+if (findAll(subMenu, hasClass("danger")).length !== 1) throw new Error("the sibling row keeps its own class");
+console.log("CommandMenu 发送到 flyout ok:", children.length === 3);
+
+// A menu that would push its flyout off the right edge flips it to the left:
+// data-flip rides on the .ctxmenu and the stylesheet turns left:100% into
+// right:100%. Without it 发送到 would open outside the window.
+const flipMenu = (left) => findAll(render({
+  type: CommandMenu,
+  props: {
+    anchor: { left, bottom: 300, element: null },
+    items: [{ label: "发送到", icon: "shortcut", sub: [{ label: "收藏", icon: "star", run: noop }] }],
+    onClose: noop,
+  },
+}), hasClass("ctxmenu"))[0];
+const nearEdge = flipMenu(1270);
+if (nearEdge.props["data-flip"] !== "1") throw new Error("a right-edge menu must flip its flyout");
+const away = flipMenu(400);
+if (away.props["data-flip"] !== undefined) throw new Error("a menu with room must keep the default flyout");
+console.log("CommandMenu data-flip ok:", nearEdge.props["data-flip"] === "1");
 
 // ── dialogs ─────────────────────────────────────────────────────────────────
 // Every dialog is local now, and it must be local *and* on the plugin's dialog

@@ -367,14 +367,10 @@
     };
     if (node.kind === "ungrouped") return live.filter((session) => placeOf(session) === FIXED.ungrouped);
     if (node.workspaceId) return live.filter((session) => placeOf(session) === nodeId);
-    if (node.id === FIXED.root) {
-      // 根目录 is the directory tree: every session placed on a workspace node.
-      const below = idsBelow(nodeId);
-      return live.filter((session) => {
-        const placed = placeOf(session);
-        return Boolean(placed && placed !== FIXED.ungrouped && below.has(placed));
-      });
-    }
+    // 根目录 is a directory, not a list: its rows are folders, workspaces and the
+    // 所有会话 view. It holds no sessions of its own, so the flat list stays the
+    // one place that shows everything.
+    if (node.id === FIXED.root) return [];
     // A folder aggregates its subtree.
     const ids = idsBelow(nodeId);
     return live.filter((session) => {
@@ -629,13 +625,18 @@
     return state.checked.has(id);
   }
 
-  function renderSessionRow(entry, now) {
+  function renderSessionRow(entry, now, options = {}) {
     const { session, depth, childCount, collapsed } = entry;
+    // 所有会话 lists every session as a *reference* to where it really lives:
+    // the same row, wearing the shortcut mark, whose menu can jump back to the
+    // original. The view must not pretend to be the file.
+    const reference = options.reference === true;
     const status = statusOf(session);
     const isChild = Boolean(session.isSubagent);
     const renaming = state.renaming && state.renaming.kind === "session" && state.renaming.id === session.id ? state.renaming : null;
     const cls = ["row"];
     if (state.selected === session.id) cls.push("sel");
+    if (reference) cls.push("ref-row");
     if (session.archived) cls.push("arch");
     if (session.pinned) cls.push("pinned-row");
     if (state.clipboard.mode === "cut" && state.clipboard.ids.includes(session.id)) cls.push("cut");
@@ -647,7 +648,8 @@
         ? '<span class="twist" data-twist="' + esc(session.id) + '" title="' + (collapsed ? "展开子智能体会话" : "收起子智能体会话") + '">' +
           icon(collapsed ? "chevright" : "chevdown", 12) + "</span>"
         : "") +
-      icon(isChild ? "external" : "chat", 16, "ic") +
+      icon(isChild ? "external" : reference ? "shortcut" : "chat", 16, "ic" + (reference ? " ref-ic" : "")) +
+      (reference ? '<span class="scmark" title="快捷方式（指向原位置，不移动它）">' + icon("shortcut", 9) + "</span>" : "") +
       (renaming
         ? '<input class="nm-edit" id="rename-input" data-rename-session="' + esc(session.id) + '" value="' + esc(renaming.value) + '" spellcheck="false" autocomplete="off">'
         : '<span class="nm" title="' + esc(session.id) + '">' + esc(session.displayTitle ?? session.id) + "</span>" +
@@ -680,6 +682,7 @@
 
   function renderContainerRow(node, now) {
     const isWorkspace = node.type === "workspace";
+    const isShortcut = node.kind === "shortcut";
     const isFolder = node.type === "folder" && node.kind === "folder";
     // 默认工作区 is an ordinary workspace now — it moves, pins, deletes, and so it
     // renames too — which leaves "is this deletable" as the only editability rule.
@@ -687,9 +690,14 @@
     const effectiveId = isWorkspace ? node.workspaceId ?? node.id : node.id;
     const renaming =
       state.renaming && state.renaming.kind === (isWorkspace ? "workspace" : "folder") && state.renaming.id === effectiveId ? state.renaming : null;
-    const label = node.name ?? node.path ?? node.id;
+    // A shortcut shows its target's name and wears the reference styling.
+    const label = isShortcut ? nodeLabel(node) : node.name ?? node.path ?? node.id;
     const count = counts()[node.id] ?? 0;
-    const cls = ["row", "frow", isWorkspace ? "wsrow" : isFolder ? "folderrow" : "specialrow"];
+    const cls = [
+      "row",
+      "frow",
+      isWorkspace ? "wsrow" : isShortcut ? "scrow" : isFolder ? "folderrow" : "specialrow",
+    ];
     if (state.selected === node.id || scopeId() === node.id) cls.push("sel");
     return (
       '<div class="' + cls.join(" ") + '" data-id="' + esc(node.id) + '" data-node="' + esc(node.id) + '"' +
@@ -705,7 +713,8 @@
         ? '<input class="nm-edit" id="rename-input" data-rename-node="' + esc(node.id) + '" value="' + esc(renaming.value) + '" spellcheck="false">'
         : '<span class="nm" title="' + esc(node.path || node.id) + '">' + esc(label) + "</span>" +
           (editable ? '<span class="nm-editbtn" data-beginrename="' + esc(effectiveId) + '" title="重命名">' + icon("pencil", 11) + "</span>" : "")) +
-      '<span class="wstag' + (isWorkspace ? "" : isFolder ? " ftag" : " stag") + '">' + (isWorkspace ? "工作区" : isFolder ? "文件夹" : "特殊文件夹") + "</span>" +
+      (isShortcut ? '<span class="scmark" title="快捷方式（指向原位置，不移动它）">' + icon("shortcut", 10) + "</span>" : "") +
+      '<span class="wstag' + (isWorkspace ? "" : isFolder ? " ftag" : " stag") + '">' + (isWorkspace ? "工作区" : isShortcut ? "快捷方式" : isFolder ? "文件夹" : "特殊文件夹") + "</span>" +
       "</div></div>" +
       '<div class="cell col-tags dim"></div>' +
       '<div class="cell col-note dim"></div>' +
@@ -757,9 +766,14 @@
       !needle || String(node.name ?? "").toLowerCase().includes(needle) || String(node.path ?? "").toLowerCase().includes(needle);
 
     const specialNodes =
-      scope !== FIXED.root || needle ? [] : [FIXED.ungrouped, FIXED.favorites, FIXED.todos].map(nodeOf).filter(Boolean);
+      scope !== FIXED.root || needle ? [] : [FIXED.all, FIXED.ungrouped, FIXED.favorites, FIXED.todos].map(nodeOf).filter(Boolean);
+    // A shortcut is a row like any other: 收藏 / 待办 would be unusable if their
+    // contents only existed in the tree.
     const isRealContainer = (node) =>
-      Boolean(node) && (node.type === "workspace" || (node.type === "folder" && node.kind === "folder" && !node.fixed));
+      Boolean(node) &&
+      (node.type === "workspace" ||
+        node.kind === "shortcut" ||
+        (node.type === "folder" && node.kind === "folder" && !node.fixed));
     const containerNodes =
       scope === FIXED.trash
         ? []
@@ -767,14 +781,17 @@
           ? Object.values(nodes()).filter((node) => isRealContainer(node) && matchesNeedle(node))
           : (children()[scope] ?? []).map(nodeOf).filter(isRealContainer);
 
-    const rowsOf = (list) => nestSessions(list, state.collapsed).map((entry) => renderSessionRow(entry, now));
+    // 所有会话 shows each row as a reference to where it lives, so the flat list
+    // is the one scope whose rows are drawn apart from the things they point at.
+    const rowsOf = (list) =>
+      nestSessions(list, state.collapsed).map((entry) => renderSessionRow(entry, now, { reference: scope === FIXED.all }));
     const containerRows = (list) => list.map((node) => renderContainerRow(node, now));
 
     const groups = [];
     if (pinned.length > 0) groups.push({ key: "pinned", title: "置顶", icon: "pin", count: pinned.length, rows: rowsOf(pinned) });
     if (specialNodes.length > 0) groups.push({ key: "special", title: "特殊文件夹", icon: "star", count: specialNodes.length, rows: containerRows(specialNodes) });
     const workspaces = containerNodes.filter((node) => node.type === "workspace");
-    const folders = containerNodes.filter((node) => node.type === "folder");
+    const folders = containerNodes.filter((node) => node.type === "folder" || node.kind === "shortcut");
     if (needle && containerNodes.length > 0) {
       groups.push({ key: "found", title: "搜索到的目录", icon: "search", count: containerNodes.length, rows: containerRows(containerNodes) });
     } else {
@@ -799,7 +816,10 @@
           '<div class="lh ' + column.cls + (sortedCol ? " sorted" : "") + '" data-col="' + key + '" data-sort="' + key + '">' +
           '<span class="lhlabel">' + esc(column.label) + "</span>" +
           '<span class="sortdot" aria-hidden="true">▼</span>' +
-          '<span class="colrsz" data-cw="' + key + '" title="拖动调整列宽"></span>' +
+          // `data-colrz`, not `data-cw`: the list pane itself carries
+          // `data-cw` for its column-width mode, so a lookup by that name would
+          // match the pane from any press inside it and start a bogus resize.
+          '<span class="colrsz" data-colrz="' + key + '" title="拖动调整列宽"></span>' +
           "</div>"
         );
       }).join("") +
@@ -1174,22 +1194,39 @@
     const height = 40 + menu.items.length * 30;
     const x = Math.max(4, Math.min(menu.left, (Number(window.innerWidth) || 1280) - width));
     const y = Math.max(4, Math.min(menu.top, (Number(window.innerHeight) || 800) - height));
-    const items = menu.items
-      .map((item) => {
-        if (item.sep) return '<div class="misep"></div>';
-        const cls = ["mi"];
-        if (item.danger) cls.push("danger");
-        if (item.disabled) cls.push("disabled");
-        return (
-          '<div class="' + cls.join(" ") + '" data-mi="' + esc(item.id) + '"' + (item.disabled ? ' aria-disabled="true"' : "") + ">" +
-          '<span class="ic">' + (item.icon ? icon(item.icon) : "") + "</span>" +
-          "<span>" + esc(item.label) + "</span>" +
-          (item.key ? '<span class="k">' + esc(item.key) + "</span>" : "") +
-          "</div>"
-        );
-      })
-      .join("");
-    return '<div class="ctxmenu open" style="left:' + x + "px;top:" + y + 'px" data-menu="1">' + items + "</div>";
+    // 发送到 opens its flyout to the right (left:100%). A menu pinned against
+    // the right edge would push that flyout off-screen, so it flips its
+    // flyouts to the left instead (data-flip, matched in the stylesheet).
+    const flip = x + width + 190 > (Number(window.innerWidth) || 1280) - 8;
+    // 发送到: an item may carry `sub`, an array of items of the same shape.
+    // Those render as a hover flyout to the right (.mi.has-sub in the
+    // stylesheet); the parent is a label, so its data-mi never fires because
+    // it carries none — hover is the only way in, exactly as in the panel.
+    const menuItemHtml = (item, key) => {
+      if (item.sep) return '<div class="misep"></div>';
+      const hasSub = Array.isArray(item.sub) && item.sub.length > 0;
+      const cls = ["mi"];
+      if (item.danger) cls.push("danger");
+      if (item.disabled) cls.push("disabled");
+      if (hasSub) cls.push("has-sub");
+      return (
+        '<div class="' + cls.join(" ") + '"' +
+        (hasSub ? "" : ' data-mi="' + esc(item.id) + '"') +
+        (item.disabled ? ' aria-disabled="true"' : "") +
+        (hasSub ? ' aria-haspopup="true"' : "") + ">" +
+        '<span class="ic">' + (item.icon ? icon(item.icon) : "") + "</span>" +
+        "<span>" + esc(item.label) + "</span>" +
+        (hasSub
+          ? '<span class="k"><span class="ic">' + icon("chevright", 11) + "</span></span>"
+          : item.key ? '<span class="k">' + esc(item.key) + "</span>" : "") +
+        (hasSub
+          ? '<div class="submenu">' + item.sub.map((child, index) => menuItemHtml(child, key + "-" + index)).join("") + "</div>"
+          : "") +
+        "</div>"
+      );
+    };
+    const items = menu.items.map((item, index) => menuItemHtml(item, "mi-" + index)).join("");
+    return '<div class="ctxmenu open"' + (flip ? ' data-flip="1"' : "") + ' style="left:' + x + "px;top:" + y + 'px" data-menu="1">' + items + "</div>";
   }
 
   function renderDialog() {
@@ -1269,6 +1306,11 @@
 
   // ── rendering: shell ───────────────────────────────────────────────────
   let focusBeforeRender = null;
+  // True while `render` replaces the markup. Replacing it removes the focused
+  // element, and the browser reports that as `focusout`; treating our own
+  // re-render as the user leaving a field is what closed the rename editor a
+  // frame after it opened.
+  let rendering = false;
 
   function captureFocus() {
     try {
@@ -1323,7 +1365,9 @@
     }
 
     focusBeforeRender = captureFocus();
-    host.innerHTML =
+    rendering = true;
+    try {
+      host.innerHTML =
       '<div class="se-shell" data-bp="wide" data-view="' + state.view + '" data-detail="' + (state.showDetail ? "on" : "off") + '" data-material="solid">' +
       renderTabs() +
       renderNavbar() +
@@ -1339,6 +1383,9 @@
       renderDialog() +
       "</div>" +
       renderToast();
+    } finally {
+      rendering = false;
+    }
     restoreFocus();
   }
 
@@ -1586,7 +1633,9 @@
         state.selectedNode = null;
         render();
       }
-      openMenu(event.clientX, event.clientY, sessionMenu());
+      // A row in 所有会话 is a reference, not the session itself: it gets the
+      // smaller menu that can only point at the original.
+      openMenu(event.clientX, event.clientY, scopeId() === FIXED.all ? referenceMenu() : sessionMenu());
       return;
     }
     const nodeRow = closest(event.target, "[data-node]");
@@ -1624,11 +1673,16 @@
   }
 
   function onMouseDown(event) {
-    const handle = closest(event.target, "[data-cw]");
+    // A press inside a text field is the field's: it places the caret and must
+    // not be treated as the start of a column resize or a row drag.
+    const field = event.target;
+    if (field && (field.tagName === "INPUT" || field.tagName === "TEXTAREA")) return;
+    const handle = closest(event.target, "[data-colrz]");
     if (handle) {
       event.preventDefault();
       event.stopPropagation();
-      resizeColumn(handle.getAttribute("data-cw"), event.clientX);
+      handle.classList.add("on");
+      resizeColumn(handle.getAttribute("data-colrz"), event.clientX);
       return;
     }
     const pane = closest(event.target, "[data-rsz]");
@@ -1642,6 +1696,9 @@
   function onFocusOut(event) {
     const target = event.target;
     if (!target) return;
+    // See `rendering`: our own rebuild removed the field, so this is not the
+    // user leaving it.
+    if (rendering) return;
     if (state.renaming && target.id === "rename-input") void commitRename();
     if (target.id === "note-input") void saveNote(String(target.value ?? ""));
   }
@@ -1666,7 +1723,13 @@
         state.cols[key] = Math.max(MIN_COL, Math.round(startWidth + (event.clientX - startX)));
         render();
       },
-      () => savePrefs(),
+      () => {
+        // The strip is re-created by every render, so the highlight is dropped
+        // by looking it up again rather than by holding the old element.
+        const handle = root()?.querySelector(".colrsz.on");
+        if (handle) handle.classList.remove("on");
+        savePrefs();
+      },
     );
   }
 
@@ -1731,7 +1794,24 @@
     const drag = state.drag;
     const node = nodeOf(nodeId);
     if (!drag || !node) return { ok: false };
+    // 收藏 / 待办 hold *references*: anything dropped there becomes a shortcut and
+    // the target never moves (hard constraint 5). That is true of a session, a
+    // folder and a workspace alike, which is why this check comes first.
+    if (nodeId === FIXED.favorites || nodeId === FIXED.todos) {
+      const label = nodeId === FIXED.favorites ? "收藏" : "待办";
+      if (drag.kind === "session") return { ok: true, shortcut: { parent: nodeId, kind: "session" }, name: label };
+      if (drag.kind === "node") {
+        if (drag.id === FIXED.root) return { ok: false };
+        return { ok: true, shortcut: { parent: nodeId, kind: "node", id: drag.id }, name: label };
+      }
+      return { ok: false };
+    }
     if (drag.kind === "session") {
+      // A folder can only hold a *reference*: a session belongs to a workspace,
+      // so dropping one here leaves a shortcut and moves nothing.
+      if (node.type === "folder" && node.kind === "folder" && !node.fixed) {
+        return { ok: true, shortcut: { parent: nodeId, kind: "session" }, name: node.name ?? nodeId };
+      }
       // 未分组 accepts sessions too, but as a *virtual* placement: the payload
       // stays in its workspace directory (hard constraint 1).
       if (nodeId === FIXED.ungrouped) return { ok: true, place: FIXED.ungrouped, name: "未分组" };
@@ -1787,6 +1867,10 @@
     }
     event.preventDefault();
     const copy = event.ctrlKey || event.metaKey;
+    if (verdict.shortcut) {
+      void dropAsShortcut(drag, verdict.shortcut, verdict.name);
+      return;
+    }
     if (drag.kind === "session" && verdict.place) void placeSessions(drag.ids, verdict.place);
     else if (drag.kind === "session") void moveSessions(drag.ids, verdict.workspaceId, copy, verdict.name);
     else if (drag.kind === "node") void moveNodeTo(drag.id, verdict.parent);
@@ -2030,8 +2114,19 @@
     items.push({ id: "copy", label: "复制", icon: "copy", key: "Ctrl+C" });
     items.push({ id: "paste", label: "粘贴到此处", icon: "paste", key: "Ctrl+V", disabled: !canPasteHere() });
     items.push({ sep: true });
-    items.push({ id: "add-favorite", label: "添加到收藏（快捷方式）", icon: "star" });
-    items.push({ id: "add-todo", label: "添加到待办（快捷方式）", icon: "todo" });
+    // 发送到: the three ways to hand this row to a container, folded into one
+    // hover flyout — each of them says "put a reference to this elsewhere".
+    items.push({
+      id: "send-to",
+      label: "发送到",
+      icon: "shortcut",
+      sub: [
+        { id: "add-favorite", label: "收藏", icon: "star" },
+        { id: "add-todo", label: "待办", icon: "todo" },
+        { sep: true },
+        { id: "create-shortcut", label: "创建快捷方式", icon: "shortcut" },
+      ],
+    });
     items.push({ sep: true });
     items.push({ id: "export-md", label: "导出为 Markdown", icon: "download" });
     items.push({ id: "export-jsonl", label: "导出为 JSONL", icon: "download" });
@@ -2055,8 +2150,21 @@
     const pinned = Boolean(state.boot?.tree?.pins?.[node.id]);
     items.push({ id: "pin-node", label: pinned ? "取消置顶" : "置顶", icon: "pin" });
     if (isWorkspace) items.push({ id: "reveal-workspace", label: "在文件管理器中显示", icon: "locate" });
-    items.push({ id: "add-favorite", label: "添加到收藏", icon: "star" });
-    items.push({ id: "add-todo", label: "添加到待办", icon: "todo" });
+    // 发送到: same three destinations as the session menu, as a hover flyout.
+    // 创建快捷方式 puts the reference in 收藏 (or 待办, when standing there): a
+    // shortcut has nowhere else obvious to go, and it must never land in the
+    // tree beside the thing it points at.
+    items.push({
+      id: "send-to",
+      label: "发送到",
+      icon: "shortcut",
+      sub: [
+        { id: "add-favorite", label: "收藏", icon: "star" },
+        { id: "add-todo", label: "待办", icon: "todo" },
+        { sep: true },
+        { id: "create-shortcut", label: "创建快捷方式", icon: "shortcut" },
+      ],
+    });
     items.push({ sep: true });
     items.push({ id: "cut", label: "剪切", icon: "cut", key: "Ctrl+X" });
     if (canHoldContainers(node.id)) {
@@ -2076,6 +2184,26 @@
       { id: "paste-shortcut", label: "粘贴为快捷方式", icon: "paste", disabled: state.clipboard.ids.length === 0 && state.clipboard.nodes.length === 0 },
       { sep: true },
       { id: "select-all", label: "全选", icon: "check", key: "Ctrl+A" },
+    ];
+  }
+
+  /**
+   * 所有会话: the menu for a row that only *points* at a session.
+   *
+   * Renaming or re-tagging from here would edit the original through a view,
+   * which is exactly what a reference must not do; what it can do is take you
+   * to the original, open its folder, copy the id, or drop the reference.
+   */
+  function referenceMenu() {
+    const session = state.selected ? allSessions().get(state.selected) : null;
+    if (!session) return blankMenu();
+    const total = idsToActOn().length;
+    return [
+      { id: "jump-original", label: "跳转到原位置", icon: "locate" },
+      { id: "reveal-session", label: "在文件管理器中显示", icon: "folder" },
+      { sep: true },
+      { id: "copy", label: "复制", icon: "copy", key: "Ctrl+C" },
+      { id: "delete", label: total > 1 ? "删除 " + total + " 个会话（进回收站）" : "删除（进回收站）", icon: "trash", danger: true },
     ];
   }
 
@@ -2149,6 +2277,8 @@
         return void (await pasteAsShortcut());
       case "add-todo":
         return void (await addShortcutTo(FIXED.todos));
+      case "create-shortcut":
+        return void (await createShortcutHere());
       case "pin-node": {
         const node = state.selectedNode ? nodeOf(state.selectedNode) : null;
         if (!node) return;
@@ -2163,6 +2293,15 @@
         const node = state.selectedNode ? nodeOf(state.selectedNode) : null;
         if (node) await removeShortcut(node.id);
         return undefined;
+      }
+      case "jump-original": {
+        const session = state.selected ? allSessions().get(state.selected) : null;
+        if (session) jumpToOriginal(session.id);
+        return undefined;
+      }
+      case "reveal-session": {
+        const session = state.selected ? allSessions().get(state.selected) : null;
+        return void (await revealSessionPath(session));
       }
       case "reveal-target": {
         const node = state.selectedNode ? nodeOf(state.selectedNode) : null;
@@ -2198,6 +2337,63 @@
     }
   }
 
+  /**
+   * Turn a drag gesture into references in 收藏 / 待办.
+   *
+   * A drop there is always "add a shortcut": the payload keeps living where it
+   * lives, which is the whole point of those two containers.
+   */
+  async function dropAsShortcut(drag, spec, label) {
+    try {
+      if (drag.kind === "session") {
+        for (const id of drag.ids) await post("/shortcuts", { parent: spec.parent, kind: "session", targetId: id });
+        await reload(false);
+        return setHint("已把 " + drag.ids.length + " 个会话添加到「" + label + "」（原位置不变）");
+      }
+      const node = nodeOf(spec.id);
+      if (!node) return setHint("这个目录已经不存在");
+      if (node.kind === "shortcut") return setHint("快捷方式不能再放进「" + label + "」");
+      const kind = node.type === "workspace" ? "workspace" : "folder";
+      const targetId = kind === "workspace" ? node.workspaceId ?? node.id : node.id;
+      await post("/shortcuts", { parent: spec.parent, kind, targetId });
+      await reload(false);
+      return setHint("已添加到「" + label + "」（原位置不变）");
+    } catch (error) {
+      return setHint(String(error?.message ?? error));
+    }
+  }
+
+  /**
+   * 创建快捷方式 for the current selection.
+   *
+   * The reference goes where it makes sense to look for it: 待办 if the user is
+   * standing there, 收藏 otherwise. The target never moves.
+   */
+  async function createShortcutHere() {
+    // In the container the user is standing in; the views (根目录 / 所有会话) and
+    // the bin cannot hold a reference, so those fall back to 收藏.
+    const here = scopeId();
+    const parent = here === FIXED.root || here === FIXED.all || here === FIXED.trash ? FIXED.favorites : here;
+    const label = nodeLabel(nodeOf(parent)) || "收藏";
+    const node = state.selectedNode ? nodeOf(state.selectedNode) : null;
+    const ids = idsToActOn().filter((id) => allSessions().has(id));
+    try {
+      if (node && node.kind !== "shortcut") {
+        const kind = node.type === "workspace" ? "workspace" : "folder";
+        const targetId = kind === "workspace" ? node.workspaceId ?? node.id : node.id;
+        await post("/shortcuts", { parent, kind, targetId });
+        await reload(false);
+        return setHint("已创建快捷方式（放到「" + label + "」，原位置不变）");
+      }
+      if (ids.length === 0) return setHint("先选择要创建快捷方式的会话或目录");
+      for (const id of ids) await post("/shortcuts", { parent, kind: "session", targetId: id });
+      await reload(false);
+      return setHint("已创建 " + ids.length + " 个快捷方式（放到「" + label + "」，原位置不变）");
+    } catch (error) {
+      return setHint(String(error?.message ?? error));
+    }
+  }
+
   /** Paste the clipboard into the *current* container as references. */
   async function pasteAsShortcut() {
     const parent = scopeId();
@@ -2227,6 +2423,57 @@
       state.selectedNode = null;
       await reload(false);
       setHint("已移除快捷方式");
+    } catch (error) {
+      setHint(String(error?.message ?? error));
+    }
+  }
+
+  /**
+   * 跳转到原位置 for a row that is only a reference.
+   *
+   * 所有会话 shows every session as a pointer to where it really lives, so
+   * "jump to the original" means: open the chain of ancestors down to the
+   * container that owns it, enter that container and select the row there. It
+   * never moves anything.
+   */
+  function jumpToOriginal(sessionId) {
+    const session = allSessions().get(sessionId);
+    if (!session) return setHint("这个会话已经不存在");
+    const placement = state.boot?.tree?.sessionPlacement?.[sessionId];
+    const nodeId =
+      typeof placement === "string" && nodeOf(placement)
+        ? placement
+        : session.workspaceId && nodeOf("w-" + session.workspaceId)
+          ? "w-" + session.workspaceId
+          : FIXED.ungrouped;
+    if (!nodeOf(nodeId)) return setHint("这个会话的原位置已经不存在");
+    // Expand every ancestor first, or the container we navigate to is hidden
+    // inside a collapsed branch and the jump lands the user nowhere.
+    const seen = new Set();
+    let cursor = nodeOf(nodeId)?.parent ?? null;
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      state.expanded.add(cursor);
+      cursor = nodeOf(cursor)?.parent ?? null;
+    }
+    state.expanded.add(nodeId);
+    navigate(nodeId);
+    state.selected = sessionId;
+    state.selectedNode = null;
+    state.checked.clear();
+    state.showDetail = true;
+    render();
+    scrollSelectedIntoView();
+    return setHint("已定位到原位置：「" + (session.displayTitle ?? session.id) + "」");
+  }
+
+  /** 在文件管理器中显示 for a session row: open the folder it runs in. */
+  async function revealSessionPath(session) {
+    if (!session) return setHint("先选择一个会话");
+    if (!session.cwd) return setHint("这个会话没有记录工作目录");
+    try {
+      await post("/reveal-path", { path: session.cwd });
+      setHint("已在文件管理器中打开");
     } catch (error) {
       setHint(String(error?.message ?? error));
     }
@@ -2567,6 +2814,8 @@
       tabs.push({ id: "t" + tabs.length, scope: entry.scope, history, cursor });
     }
     if (tabs.length > 0) return tabs;
+    // 根目录 is where a window opens: its list shows the directories plus the
+    // 所有会话 folder, which is where the flat list of sessions lives.
     return [makeTab(FIXED.root, 0)];
   }
 
@@ -2615,9 +2864,15 @@
       tab.history.push(id);
       tab.cursor = tab.history.length - 1;
     }
+    // Entering a *different* container abandons whatever was being edited;
+    // re-entering the one already open must not, or a click that merely lands on
+    // a row while its name is being edited would close the editor.
+    const changed = tab.scope !== id;
     tab.scope = id;
-    state.checked.clear();
-    state.renaming = null;
+    if (changed) {
+      state.checked.clear();
+      state.renaming = null;
+    }
     // Entering a container also opens it: a folder the user just stepped into
     // that stayed collapsed would hide the very thing they asked for.
     state.expanded.add(id);

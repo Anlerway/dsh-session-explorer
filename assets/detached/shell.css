@@ -231,15 +231,20 @@ html,body{height:100%;margin:0;background:var(--dsw-alias-bg-layer-1,#232324);co
 .se-shell .col-date{flex:0 0 var(--w-date);width:var(--w-date)}
 .se-shell .col-size{flex:0 0 var(--w-size);width:var(--w-size);justify-content:flex-end}
 .se-shell .col-status{flex:0 0 var(--w-status);width:var(--w-status)}
+/* The header cell sorts; the strip on its right edge resizes. The strip is a
+   full-height 13px band straddling the boundary, because a 7px sliver at the
+   top of a 28px header is a hit test the user has to aim at rather than a
+   handle they can grab. The visible rule stays 1px so the header still reads
+   as text, not as a row of dividers. */
 .se-shell .lh{position:relative}
-.se-shell .lh[data-col]{cursor:grab}
-.se-shell .lh.dragging{opacity:.45}
-.se-shell .lh.dropbefore{box-shadow:inset 2px 0 0 var(--sm-accent)}
-.se-shell .lh.dropafter{box-shadow:inset -2px 0 0 var(--sm-accent)}
-.se-shell .colrsz{position:absolute;top:6px;bottom:6px;right:-3px;width:7px;cursor:col-resize;z-index:4; border-radius:2px;background:transparent;}
-.se-shell .colrsz:hover,.se-shell .colrsz.on{background:color-mix(in oklab, var(--sm-accent) 70%, transparent)}
-.se-shell .colrsz::after{content:"";position:absolute;left:3px;top:0;bottom:0;width:1px;background:var(--sm-border-soft)}
-.se-shell .colrsz:hover::after{background:transparent}
+.se-shell .lh[data-col]{cursor:pointer}
+.se-shell .colrsz{position:absolute;top:0;bottom:0;right:-6px;width:13px;cursor:col-resize;z-index:5;background:transparent;}
+.se-shell .colrsz::after{content:"";position:absolute;left:6px;top:8px;bottom:8px;width:1px;background:var(--sm-border-soft)}
+.se-shell .colrsz:hover::after,.se-shell .colrsz.on::after{top:0;bottom:0;width:2px;left:5.5px;background:var(--sm-accent)}
+.se-shell .lh:hover .lhlabel{color:var(--sm-text-2)}
+/* While a column is being dragged the whole list shows the resize cursor, so
+   the pointer does not flicker back to an arrow when it leaves the strip. */
+.se-shell .pane-list[data-resizing="1"],.se-shell .pane-list[data-resizing="1"] *{cursor:col-resize !important;user-select:none}
 .se-shell .pane-list[data-cw="slim"] .col-tags,.se-shell .pane-list[data-cw="slim"] .col-status,.se-shell .pane-list[data-cw="slim"] .col-size,.se-shell .pane-list[data-cw="mid"] .col-status{display:none}
 .se-shell .listbody{flex:1;overflow:auto;min-height:0;padding-bottom:8px}
 .se-shell .grp{display:flex;align-items:center;gap:6px;height:30px;padding:0 12px;margin-top:6px; font-size:11.5px;color:var(--sm-text-2);font-weight:600;position:sticky;top:0; background:color-mix(in oklab, var(--sm-tint) 55%, transparent); backdrop-filter:blur(8px);z-index:2;}
@@ -350,7 +355,11 @@ html,body{height:100%;margin:0;background:var(--dsw-alias-bg-layer-1,#232324);co
 .se-shell .ffoot{display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid var(--sm-border-soft)}
 .se-shell .ffoot .spacer{flex:1}
 .se-shell .cmd{gap:6px;padding:0 10px}
-.se-shell .det-actions{margin-top:auto;padding:12px 14px;display:flex;flex-wrap:wrap;gap:6px;border-top:1px solid var(--sm-border-soft)}
+/* The action row is a grid, not a wrapped flex line: buttons of different
+   label lengths used to wrap into a ragged block, leaving each row a different
+   width. Equal columns make every button the same size and line up in columns. */
+.se-shell .det-actions{margin-top:auto;padding:12px 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:6px;border-top:1px solid var(--sm-border-soft)}
+.se-shell .det-actions .act{justify-content:center;min-width:0;white-space:nowrap}
 .se-shell .act{display:flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:4px;font:inherit;font-size:12px; background:color-mix(in oklab, var(--sm-text) 7%, transparent);border:1px solid var(--sm-border); color:var(--sm-text);cursor:pointer;}
 .se-shell .act:hover{background:color-mix(in oklab, var(--sm-text) 12%, transparent)}
 .se-shell .act.primary{background:var(--sm-accent);border-color:transparent;color:#04283a;font-weight:600}
@@ -398,6 +407,18 @@ html,body{height:100%;margin:0;background:var(--dsw-alias-bg-layer-1,#232324);co
 .se-shell .ctxmenu.sub{min-width:180px}
 .se-shell .mi.has-sub .k{display:grid;place-items:center;width:14px;height:14px;margin-left:auto;color:var(--sm-text-3)}
 .se-shell .mi.has-sub .k .ic{width:11px;height:11px}
+/* 发送到: a nested menu is a flyout, not a second overlay. Hovering the parent
+   row opens it to the right, which is how a file manager's Send-to works and
+   keeps the parent menu's own click behaviour untouched. */
+.se-shell .mi.has-sub{position:relative}
+.se-shell .mi.has-sub>.submenu{display:none;position:absolute;left:100%;top:-5px;min-width:190px;padding:4px;border-radius:8px;
+  background:color-mix(in oklab, var(--sm-tint) 92%, transparent);backdrop-filter:blur(30px) saturate(1.5);
+  border:1px solid var(--sm-border);box-shadow:0 16px 40px rgba(0,0,0,.42);z-index:1}
+.se-shell .mi.has-sub:hover>.submenu{display:block}
+/* The flyout opens to the right by default; when the menu itself sits against
+   the right edge (see data-flip on the menu) it opens to the left instead. */
+.se-shell .ctxmenu[data-flip="1"] .mi.has-sub>.submenu{left:auto;right:100%}
+.se-shell .mi.has-sub:hover{background:color-mix(in oklab, var(--sm-text) 9%, transparent)}
 .se-shell[data-bp="mid"] .pane-detail{position:absolute;right:0;top:0;bottom:0;width:330px;z-index:8; box-shadow:-14px 0 34px rgba(0,0,0,.32); background:color-mix(in oklab, var(--sm-tint) 92%, transparent); backdrop-filter:blur(28px) saturate(1.4); transform:translateX(100%);transition:transform .18s ease;}
 .se-shell[data-bp="mid"] .pane-detail.open{transform:none}
 .se-shell[data-bp="mid"] .rsz-detail{display:none}
