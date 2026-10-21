@@ -1,0 +1,140 @@
+/**
+ * dsh-session-explorer — the detached window's stylesheet.
+ *
+ * The window runs the panel's own component (lib/client.js), so this file is
+ * not a second skin: it is the handful of rules that turn a floating overlay
+ * into a whole window. The panel's own stylesheet (injected by client.js) still
+ * does all the drawing.
+ *
+ * Three differences, and nothing else:
+ *   1. the shell fills the frame instead of floating in the middle of it;
+ *   2. there is no scrim and no footer button — the window is the panel;
+ *   3. the tab strip drags the frameless window (Electron's app region).
+ */
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--dsw-alias-bg-layer-1, #232324);
+  color: var(--dsw-alias-label-primary, #e6e6e6);
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
+}
+
+/* The boot splash only exists until React takes the container over. */
+.boot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--dsw-alias-label-secondary, #a8a8a8);
+}
+.boot-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary, #e6e6e6);
+}
+.boot-sub {
+  font-size: 12px;
+}
+
+/* The footer button is the panel's entry point inside DSH's sidebar. In the
+   window the panel is already open, so the button is the one thing that would
+   look wrong — it is rendered, just never shown. */
+.se-footerBtn {
+  display: none !important;
+}
+
+/* 1. The window is the panel. Panel writes its own width/height inline from the
+   settings preset, so these have to win over an inline style. */
+.se-shell {
+  inset: 0 !important;
+  margin: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* 2. Nothing behind the panel to dim. */
+.se-scrim {
+  display: none !important;
+}
+
+/* 3. The tab strip is the drag handle. Its controls are not — a draggable tab
+   could not be clicked or dragged onto a new position. */
+.se-shell .titlebar {
+  -webkit-app-region: drag;
+  /* The strip runs under the caption buttons drawn by shim.js mountCaption —
+     three 34px buttons and a little air. Fixed rather than measured: the bar is
+     ours, so its width is known. `!important` because the panel's own
+     stylesheet sets the same property and is injected after this file. */
+  padding-right: 112px !important;
+}
+.se-shell .titlebar .tab,
+.se-shell .titlebar .tab-add {
+  -webkit-app-region: no-drag;
+}
+
+/* 4. The caption buttons are page-drawn (shim.js mountCaption). They sit above
+   the panel so no row can cover them, and they take the palette from the same
+   custom properties the panel uses, so both themes match. */
+.se-caption {
+  position: fixed;
+  top: 0;
+  right: 0;
+  display: flex;
+  height: 40px;
+  z-index: 2147483000;
+  -webkit-app-region: no-drag;
+}
+.se-caption-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #a8a8a8);
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+.se-caption-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(255, 255, 255, 0.08));
+  color: var(--dsw-alias-label-primary, #e6e6e6);
+}
+.se-caption-btn:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary, #4d6bfe);
+  outline-offset: -2px;
+}
+.se-caption-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+html[data-theme="light"] .se-caption-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+/* The panel's own X would be a second close button next to the caption one, and
+   "在独立窗口中打开" has no meaning here: this *is* that window. */
+.se-shell .wbtns {
+  display: none !important;
+}

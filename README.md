@@ -51,7 +51,8 @@ lib/
   host/               actions, trash, move, datadir, bridge, theme
   component/          browser-component state machine, downloader, installer
   detached/           Electron helper: launcher, main process, preload
-assets/detached/      the detached window's own page: index.html, shell.css, shell.js
+assets/detached/      the detached window's page: index.html, window.css, shim.js
+                      (no UI of its own — it loads lib/client.js)
 ```
 
 ## Install (local, out-of-tree)
@@ -133,7 +134,6 @@ Everything answers with one of two envelopes:
 | `GET /datadir`, `POST /datadir/inspect`, `POST /datadir/migrate` | Describe, pre-flight and perform the data-directory move |
 | `GET /component/status`, `/component/events` (SSE), `POST /component/{install,cancel,remove,retry}` | The optional browser component |
 | `POST /detached/{open,focus,close}` | The detached window |
-| `POST /detached/reveal` | Bring the window forward and select one session in it |
 | `POST /bridge/commands`, `GET /bridge/events` (SSE) | The panel ↔ window command bus |
 
 Mutating routes accept an expected revision through `If-Match` or a `revision` field in the
@@ -178,43 +178,55 @@ sha256 is checked **before** extraction, and the extracted tree is published by 
 failed install never destroys a working one. Removing the component deletes its marker
 first: whatever survives a locked file is then provably not a usable runtime.
 
-The window is frameless and loads `assets/detached/index.html` from disk; its tab strip is
-the drag region, and the page draws its own minimise / maximise / close. The renderer has no
-network access of its own — `connect-src 'none'` in its CSP — so every request goes through
-`window.se.api(path, init)`, an IPC call that attaches the Host token in the main process
-and only forwards paths under `/session-explorer/api`. The token never reaches the page.
+The window is frameless and loads its page from the Host itself —
+`GET /session-explorer/api/ui` — over the same loopback origin as the API. Its tab strip is
+the drag region; the minimise / maximise / close buttons are the page's own DOM
+(`mountCaption` in `assets/detached/shim.js`), drawn with the panel's tokens so they match
+either theme, and labelled for screen readers. Electron's `titleBarOverlay` was the first
+attempt and is not usable here: it is painted by Chromium above the page and cannot read CSS,
+and in this window it reported itself visible while painting nothing. Because the page is
+same-origin with the API, `connect-src 'self'` is the whole CSP story: no token in the page,
+no IPC hop for data. The preload exposes one call, `window.se.window(action)` — the frame is
+the one thing a page cannot do for itself; it returns `{ maximized }`, which is what the
+middle button's label follows.
 
-**The UI is a port, not a second design.** `assets/detached/shell.js` mirrors
-`lib/client.js` — the same `.se-shell` / `.trow` / `.row` / `.cmdbar` / `.det-head` markup,
-the same icon table, the same column model, the same context menus — and
-`assets/detached/shell.css` is that panel's stylesheet with exactly two changes at the top:
-the shell fills the window instead of floating as a centred card, and the page supplies the
-`html/body/#root` base. Everything below those two rules is the panel's own CSS, token
-bridge included, so a change to the panel's look is a change to the window's look.
+**One UI, two surfaces.** The window has no UI of its own. Its page loads `lib/client.js`,
+the same module DSH loads, and `assets/detached/shim.js` supplies the platform that module
+expects: `__ModuleLoader__`, `slots` (the footer button it mounts into), `services`
+(`uiWorkspace` → the bridge, `sessions`/`workspaces` → the API), `locale`, and `ctx`.
+`assets/detached/window.css` carries the entire visual difference: the shell fills the window
+instead of floating as a centred card, the scrim and the footer button are gone, and the
+title bar is the drag region. Everything else — markup, icons, columns, context menus,
+tokens — is the panel's own code, so a change to the panel is a change to the window by
+construction rather than by discipline.
 
 What the window can do is the whole explorer minus the settings page: three panes with
 draggable dividers, tabs with per-tab history, breadcrumb, sorting, search, filters, batch
 selection, cut/copy/paste, drag-and-drop moves, inline rename, tags, notes, favorites, todos,
 pin, archive, fork, shortcuts, export, the bin, and Ctrl+Z for the destructive ones.
 
-**Theme.** A `file://` page cannot read the app's stylesheet, so every `--dsw-alias-*`
-token there would fall back to a hard-coded dark palette — a dark card in a light app.
-The panel therefore reads its own computed tokens (14 of them, a fixed list, not a CSS
-scrape) and posts them to `/theme`; the window asks for them on boot and on `focus` and
-writes them to its own `:root`. Values are validated by `isSafeTokenValue` before they
-reach a style attribute.
+**Theme.** The panel reads its own computed tokens (14 of them, a fixed list, not a CSS
+scrape) and posts them to `/theme`; the window asks for that snapshot on boot — four
+attempts over ~4.6 s, because a window can open before the panel has ever reported — and
+writes it to its own `:root`, then hands the two it needs to the frame for the caption
+buttons. Values are validated by `isSafeTokenValue` before they reach a style attribute.
+The window's own `POST /theme` is dropped by the shim: its palette is a copy, and a copy
+writing back would overwrite the original with an empty one.
 
 ### The bridge (panel ↔ window)
 
-Two documents, two processes, one Host — and neither side can call the other directly. The
-panel runs inside DSH and is the only place that holds `uiWorkspace`; the window runs on a
-`file://` page whose CSP is `connect-src 'none'` and has no DSH context at all. So the Host
-carries the two directions (see `lib/host/bridge.js`):
+Two documents, two processes, one Host — and the two sides cannot call each other directly.
+The panel runs inside DSH and is the only place that holds `uiWorkspace`; the window runs the
+same code on a page the Host serves, where the shim's `uiWorkspace` is a stub that can only
+publish. So the Host carries the one direction that needs it (see `lib/host/bridge.js`):
 
 ```
 window  --POST /bridge/commands-->  Host  --SSE /bridge/events-->  panel
-panel   --POST /detached/reveal-->  Host  --control socket-->      window
 ```
+
+The window does not need the other direction: it *is* the panel, so selecting a row, opening
+the detail pane and switching workspaces are its own local state, not something another
+process has to be told about.
 
 A command is fire-and-forget: an in-memory ring buffer (64 entries, 30 s lifetime), a cursor
 per consumer, and no acknowledgement. That is deliberate — a command whose recipient is not
@@ -225,7 +237,6 @@ replaying yesterday's "open session" after a restart would move the view unasked
 |---|---|---|
 | window → panel | `open-session` | 打开 in the window now really opens the session in DSH: the window publishes, the panel opens itself and calls `uiWorkspace.openSession` |
 | window → panel | `new-session` | 新建会话 in the window starts a draft in the current workspace |
-| panel → window | `reveal` | "show me this session over there": the window switches to its workspace, selects the row, opens the detail pane and scrolls to it |
 | Host → panel | `window-open` / `window-closed` | The panel knows whether 独立窗口 is on screen without polling |
 
 The panel keeps the id-copy fallback: with no panel listening (it is closed, or an older
@@ -287,16 +298,18 @@ The panel never hard-codes a colour. Every colour is a DSH alias token
 (`--dsw-alias-bg-layer-1`, `--dsw-alias-border-l2`, `--dsw-alias-label-primary`, …), which
 is what makes it follow the app's light/dark theme and any wallpaper tint automatically.
 
-The detached window lives on `file://`, where none of those tokens exist, so the panel reports
-them: 25 of them, covering the four background layers, all four label steps (the text colours —
-`label-primary` through `label-quaternary`, plus inverted and error), brand and link, four border
-levels, two fills and the state colours. DSH declares its aliases as `var(…)` and `color-mix(…)`,
-which are meaningless outside the app, so each token is read through a hidden probe element
-(`color: var(--token)`) and reported as a concrete `rgb(…)`.
+The detached window is a separate document, and DSH's stylesheet is not in it: none of those
+tokens resolve there, so every colour would fall back to the panel's own dark defaults. The
+panel therefore reports them — fourteen, the complete set the window's stylesheets can consume,
+and the Host accepts exactly that list and nothing else — by reading its own computed style on
+`.se-shell`, which already carries the app's theme (including a theme scoped to the app surface)
+resolved into it. Values arrive as concrete colours or `color-mix(…)` expressions rather than
+raw `var(…)`, and `isSafeTokenValue` refuses anything that could escape a declaration.
 
-`mode` is *derived* from the reported `bg-layer-1` luminance rather than from an attribute —
-DSH never sets `data-theme` — so the window's native scrollbars and form controls match the
-surface they sit on. The window repaints on boot and again on every focus.
+`mode` travels alongside as a hint for the frame: `light` only when the document carries
+`data-theme="light"`, `dark` otherwise. The window reads the snapshot on boot — retrying a few
+times, because it can open before the panel has ever reported — and paints the frame's caption
+buttons from the same two tokens.
 
 No `backdrop-filter` and no darkening layer anywhere: with a wallpaper behind the panel,
 a blur would smear the image and a scrim would dim it (hard constraint 10). The scrim
@@ -317,18 +330,17 @@ so they never touch `~/.dsh` or the real sidecars.
 a listener that throws, and the payload normaliser that refuses an unknown kind instead of
 fanning it out.
 
-`test/detached-shell.test.mjs` is different in kind: it loads the **real** `shell.js` into a
-small DOM (`test/support/dom.mjs` — a parser, event bubbling and just enough element state)
-and drives it with clicks, keystrokes, context menus, checkboxes and drag events. That is the
-only thing standing between a typo in a template string and a window that opens blank, and
-it also pins the API surface: one test parses the Host's route table and fails if the window
-calls a path that is not served.
+`test/detached-window.test.mjs` covers the seam rather than the UI, because there is no
+second UI to cover. It runs the **real** `assets/detached/shim.js` against a fake window and
+asserts that booting the panel's module renders its footer slot into `#root`, that closing
+the panel closes the frame (once), that a click goes out as exactly one bridge command and
+the window's own echo is dropped instead of looping, that `POST /theme` never leaves the
+window while `GET /theme` does, and that the page loads exactly the four scripts and the one
+stylesheet the Host serves — every route it names is checked against the Host's route table.
 
-Two rules the port has to keep, and the tests enforce: the window must never call a route the
-Host does not serve, and it must never render a control the panel does not have. A selector
-that matches an ancestor (the shell itself carries `data-view`) is the classic way a ported
-handler ends up swallowing every click — the tests dispatch real events through the
-delegated listener, so that class of bug fails here rather than in the window.
+The UI itself is the panel's, so it is tested where the panel is: `npm run test:render`.
+That is the point of the arrangement — the window cannot drift from the panel, because it is
+the panel.
 
 ## License
 

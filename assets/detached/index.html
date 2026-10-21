@@ -3,18 +3,28 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<!--
+  The window is the same page the panel is: it loads the plugin's own client.js
+  and the shim that stands in for DSH while that module mounts. Everything is
+  same-origin (the Host serves this file), so no remote origin is reachable and
+  no inline script is needed.
+-->
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none';">
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self';">
 <title>会话资源管理器</title>
-<link rel="stylesheet" href="shell.css">
+<link rel="stylesheet" href="/session-explorer/api/ui/window.css">
 </head>
 <body>
 <div id="root">
   <div class="boot">
     <div class="boot-title">会话资源管理器</div>
-    <div class="boot-sub" id="boot-sub">正在读取会话…</div>
+    <div class="boot-sub" id="boot-sub">正在启动…</div>
   </div>
 </div>
-<script src="shell.js"></script>
+<script src="/session-explorer/api/ui/react.js"></script>
+<script src="/session-explorer/api/ui/react-dom.js"></script>
+<script src="/session-explorer/api/ui/shim.js"></script>
+<script src="/session-explorer/api/ui/client.js"></script>
 </body>
 </html>
