@@ -76,13 +76,23 @@ body {
 
 /* 3. The tab strip is the drag handle. Its controls are not — a draggable tab
    could not be clicked or dragged onto a new position. */
+/* The drag region is the tab strip's *box*, not the whole titlebar row.
+   Chromium builds the region from the union of draggable rects in the DOM tree
+   and a `no-drag` sibling cannot subtract from an ancestor's rect: with `drag`
+   on the row, the caption buttons drawn by shim.js `mountCaption` sat on a
+   draggable rect (they are body-level, not descendants of the row) and every
+   click started a window drag instead. So the row is inert and only the tabs
+   strip drags. */
 .se-shell .titlebar {
-  -webkit-app-region: drag;
-  /* The strip runs under the caption buttons drawn by shim.js mountCaption —
-     three 34px buttons and a little air. Fixed rather than measured: the bar is
-     ours, so its width is known. `!important` because the panel's own
-     stylesheet sets the same property and is injected after this file. */
+  -webkit-app-region: no-drag;
+  /* The strip runs under the caption buttons — three 34px buttons and a little
+     air. Fixed rather than measured: the bar is ours, so its width is known.
+     `!important` because the panel's own stylesheet sets the same property and
+     is injected after this file. */
   padding-right: 112px !important;
+}
+.se-shell .titlebar .tabs {
+  -webkit-app-region: drag;
 }
 .se-shell .titlebar .tab,
 .se-shell .titlebar .tab-add {
