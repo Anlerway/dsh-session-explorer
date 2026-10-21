@@ -408,6 +408,29 @@ test("a shortcut row never contributes to the container it sits in", () => {
   assert.equal(tree.counts["d-box"], 2);
 });
 
+test("a reference to a session survives a trashing and dies with the payload", () => {
+  // A shortcut is a second sighting of a session, and it may not be unlinked by
+  // hand — so the only row it may ever leave behind is one that still points at
+  // something. Trashing keeps it (the session can come back); a payload that is
+  // gone from disk takes the row with it, or the panel would show a reference
+  // to nothing that no command can clean up.
+  const userTree = { shortcuts: { "s-ref": { kind: "session", targetId: "s2", parent: FIXED_NODES.favorites, order: 0 } } };
+  const alive = buildAutoTree({ registry, sessions, userTree });
+  assert.ok(alive.nodes["s-ref"], "a live target keeps its reference row");
+
+  const binned = buildAutoTree({ registry, sessions, trashedIds: new Set(["s2"]), userTree });
+  assert.ok(binned.nodes["s-ref"], "a binned session is recoverable, so its reference stays");
+
+  // s2 is not in `sessions` at all: the payload was purged or deleted by hand.
+  const gone = buildAutoTree({
+    registry,
+    sessions: sessions.filter((session) => session.id !== "s2"),
+    userTree,
+  });
+  assert.equal(gone.nodes["s-ref"], undefined, "a reference to a vanished session is not built");
+  assert.equal(gone.children[FIXED_NODES.favorites].length, 0, "and it leaves no empty row behind");
+});
+
 test("a folder created inside 未分组 stays there", () => {
   const tree = buildAutoTree({
     registry,

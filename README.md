@@ -120,7 +120,7 @@ Everything answers with one of two envelopes:
 | `POST /folders`, `PATCH /folders/:id`, `DELETE /folders/:id` | Virtual folders (`?lift=0` deletes the contents too) |
 | `POST /nodes/:id/move` | Reparent a folder/workspace node |
 | `POST /nodes/:id/pin` | 置顶 a folder or a workspace (DSH pins sessions; this pins containers, and both land in one band) |
-| `POST /shortcuts`, `DELETE /shortcuts/:id` | 快捷方式: a reference to a folder, a workspace or a session. The target never moves |
+| `POST /shortcuts`, `DELETE /shortcuts/:id` | 快捷方式: a reference to a folder, a workspace or a session. The target never moves, and the panel itself never unlinks one — the route exists for repair, the UI only ever prunes references when their target is purged |
 | `POST /sessions/placement` | Show sessions in another container without moving them (see below) |
 | `POST /workspaces/:id/delete`, `POST /workspaces/:id/reveal`, `POST /reveal-path` | Drop a workspace registration (files and sessions survive), reveal a workspace or any verified path in the OS file manager |
 | `GET /export?sessionId&format=md\|jsonl` | The session as a file. Answers with the body, not an envelope |
@@ -308,12 +308,20 @@ rather than nesting a reference inside a reference.
 
 发送到 is one flyout with the three destinations — 收藏, 待办, and *the container you are
 standing in* (falling back to 收藏 from a view). The parent row is a label, not a command: it
-opens on hover and carries no action of its own. Shortcut rows are drawn apart from the things
-they point at: a dashed underline, the shortcut glyph in place of the object's own icon, a
-快捷方式 tag in the list, and a menu whose first item is 跳转到原位置.
+opens on hover and carries no action of its own. A shortcut row is drawn as itself: it keeps
+the **target's own kind of icon** — a referenced session looks like a session, a folder like a
+folder — and is marked by a 快捷方式 **tag** beside the name rather than by a substituted
+glyph. Its menu's first item is 跳转到原位置, and a session reference also lists in the list
+pane under 快捷方式 instead of sinking out of every group.
 
-删除 a shortcut removes the reference only; the original is never touched. Deleting the
-*original* leaves the shortcut in place, pointing at something that is gone.
+**A shortcut is deletable; a reference row under 所有会话 is not.** Deleting a shortcut row — in
+the tree or the list, from its menu (移除快捷方式) or with the 删除 key — removes the pointer and
+nothing else; the payload stays where it lives, which is the whole point of a reference. The one
+exception is 所有会话, whose rows *are* references to sessions filed elsewhere: 删除 refuses there
+rather than deleting a payload the row merely names. The other half of the rule still holds:
+purging a session takes every reference that pointed at it with it, and deleting a folder unlinks
+the references to that folder. Trashing does not — a binned session can be restored, and a row
+that vanished on 删除 but came back on 还原 would be worse than one that never moved.
 
 ## Search
 
@@ -370,6 +378,12 @@ stylesheet the Host serves — every route it names is checked against the Host'
 The UI itself is the panel's, so it is tested where the panel is: `npm run test:render`.
 That is the point of the arrangement — the window cannot drift from the panel, because it is
 the panel.
+
+`test/row-rename.test.mjs` closes the one gap that a single-pass render cannot see: it loads the
+same bundle against a stub React whose `useState` survives a re-render, clicks the pencil on a
+container row and asserts the editor opens. A list row owns its editor locally and only *reports*
+the new name to the panel, so a pencil click cannot be made to look broken by a stale payload or
+a gate that disagrees — the two halves are tested separately on purpose.
 
 ## License
 

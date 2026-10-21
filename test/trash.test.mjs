@@ -29,6 +29,14 @@ import {
 } from "../lib/host/trash.js";
 import { ensureDataDir, dataPaths } from "../lib/paths.js";
 import { openDocuments } from "../lib/store/documents.js";
+import { createShortcut } from "../lib/domain/shortcuts.js";
+import { FIXED_NODES } from "../lib/constants.js";
+
+/** A deterministic id source, so a test can name the row it is looking for. */
+function idFactory(seed) {
+  let n = 0;
+  return () => `${seed}${++n}`;
+}
 
 const LOG = "session.v4.jsonl.zstd";
 
@@ -252,6 +260,42 @@ test("purge deletes the payload and the entry", async () => {
     assert.deepEqual(result.purged, ["s1"]);
     assert.equal(existsSync(payload), false);
     assert.deepEqual(Object.keys((await api.documents.trash.read()).entries), []);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+/**
+ * The one way a shortcut may disappear: its target does.
+ *
+ * A reference is not the user's to delete — the row is a second sighting of
+ * something that lives elsewhere — so removing the payload has to take every
+ * pointing row with it. Trashing is *not* that moment: a binned session can
+ * still come back, and a reference that vanishes on 删除 but returns on 还原
+ * would be worse than one that never moved.
+ */
+test("purging a session prunes the references that pointed at it", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({ home: box.home, dataDir: box.dataDir, sessions: [{ id: "s1" }, { id: "s2" }] });
+    await writeSession(box.home, "proj", "s1");
+    await writeSession(box.home, "proj", "s2");
+    await api.documents.tree.mutate((draft) => {
+      createShortcut(draft, { kind: "session", targetId: "s1", parent: FIXED_NODES.favorites }, idFactory("a"));
+      createShortcut(draft, { kind: "session", targetId: "s2", parent: FIXED_NODES.todos }, idFactory("b"));
+    });
+
+    await trashSessions(api, ["s1"]);
+    assert.equal(
+      Object.keys((await api.documents.tree.read()).shortcuts ?? {}).length,
+      2,
+      "trashing keeps both references: the session is recoverable",
+    );
+
+    await purgeSessions(api, ["s1"]);
+    const kept = Object.values((await api.documents.tree.read()).shortcuts ?? {});
+    assert.equal(kept.length, 1, "only the reference to the purged session is gone");
+    assert.equal(kept[0].targetId, "s2", "the surviving reference still points at s2");
   } finally {
     await box.cleanup();
   }

@@ -89,7 +89,7 @@ const source = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8"
   .replace(
     "    exports.apply = apply;",
     [
-      "    exports.__test = { Trow, SessionRow, ContainerRow, TreePane, ListPane, DetailPane, FilterDialog, CommandMenu, DialogHost, frameSizeOf, PanelBoundary };",
+      "    exports.__test = { Trow, SessionRow, ContainerRow, TreePane, ListPane, DetailPane, FilterDialog, CommandMenu, DialogHost, frameSizeOf, PanelBoundary, iconOfNode, nodeLabel };",
       "    exports.apply = apply;",
     ].join("\n"),
   );
@@ -325,6 +325,46 @@ if (folderAt > workspaceAt) throw new Error("文件夹 must come before 工作�
 console.log("list containers ok:", folderRows.length, "folder,", wsRows.length, "workspace,", specialRows.length, "special");
 console.log("groups:", captions.join(" | "));
 
+// ── the pencil on a container row ──────────────────────────────────────────
+// "文件夹、工作区点了重命名按钮却不出现输入框，会话的重命名是好的" — the row
+// half of that report. Two halves have to agree, and the harness checks both,
+// because a gate that refuses the editor is invisible until someone clicks:
+//   1. the pencil hands the *row's* kind and id to the panel (a workspace is
+//      addressed by its native id, a folder by its tree id);
+//   2. when the panel hands a matching rename back, the row draws the input.
+const clickPencil = (pane, rowClass, label) => {
+  const row = findAll(pane, hasClass(rowClass))[0];
+  if (!row) throw new Error(`no ${rowClass} row to click (${label})`);
+  const pencil = findAll(row, hasClass("nm-editbtn"))[0];
+  if (!pencil) throw new Error(`the ${rowClass} row has no rename pencil (${label})`);
+  const event = { stopPropagation() {}, preventDefault() {}, key: "" };
+  pencil.props.onClick(event);
+};
+const begun = [];
+const renameSpy = listPaneWith({ onBeginRename: (kind, id) => begun.push([kind, id]) });
+clickPencil(renameSpy, "folderrow", "folder");
+clickPencil(renameSpy, "wsrow", "workspace");
+if (begun.length !== 2) throw new Error("both pencils must report a rename, got " + JSON.stringify(begun));
+if (begun[0][0] !== "folder" || begun[0][1] !== "d-1") {
+  throw new Error("the folder pencil must ask for its own node id, got " + JSON.stringify(begun[0]));
+}
+if (begun[1][0] !== "workspace" || begun[1][1] !== "ws-1") {
+  throw new Error("the workspace pencil must ask for the native workspace id, got " + JSON.stringify(begun[1]));
+}
+const renamingProps = (kind, id) => ({ kind, id, value: "x", onChange: noop, onCommit: noop, onCancel: noop });
+for (const [cls, kind, id] of [["folderrow", "folder", "d-1"], ["wsrow", "workspace", "ws-1"]]) {
+  const pane = listPaneWith({ rename: renamingProps(kind, id) });
+  const row = findAll(pane, hasClass(cls))[0];
+  if (findAll(row, hasClass("nm-edit")).length !== 1) {
+    throw new Error(`a ${kind} row with a matching rename must draw the editor`);
+  }
+}
+// An editor the row cannot address must not be drawn at all — that half-open
+// state is what made the click look like a no-op.
+const stale = findAll(findAll(listPaneWith({ rename: renamingProps("folder", "d-someone-else") }), hasClass("folderrow"))[0], hasClass("nm-edit"));
+if (stale.length !== 0) throw new Error("a rename for another row must not paint an editor here");
+console.log("container rename ok:", begun.map(([kind, id]) => `${kind}:${id}`).join(", "));
+
 // Search: the folder lives at f-root, so a query from the same scope finds it.
 const searched = listPaneWith({ query: "文件" });
 if (findAll(searched, hasClass("folderrow")).length !== 1) {
@@ -340,6 +380,73 @@ const trashList = listPaneWith({ scope: "f-trash" });
 if (findAll(trashList, hasClass("frow")).length !== 0) {
   throw new Error("the bin must not list containers");
 }
+
+// ── a shortcut that points at a session ────────────────────────────────────
+// Two failures met here. A session shortcut was invisible in the list: its node
+// was neither folder nor workspace nor 特殊文件夹, so it fell out of every group
+// and the list rendered nothing at all while the tree kept drawing the row —
+// the "新建了快捷方式，左边栏有、主列表没有" report. And the only thing marking a
+// row as a reference was a swapped arrow glyph; it is now a text tag beside the
+// name, with the target's own kind of icon and nothing to click away.
+const refTree = {
+  ...tree,
+  nodes: {
+    ...tree.nodes,
+    "s-1": {
+      // The host ships `shortcutKind` (see domain/tree.js) and no label of its
+      // own: the row's name is the target's, resolved at render time.
+      id: "s-1", type: "shortcut", kind: "shortcut", name: "", fixed: false,
+      parent: "f-favorites", order: 0, shortcutKind: "session", targetId: session.id,
+    },
+  },
+  children: { ...tree.children, "f-favorites": ["s-1"] },
+  counts: { ...tree.counts, "f-favorites": 1 },
+};
+decorateTree(refTree);
+const refList = listPaneWith({ tree: refTree, scope: "f-favorites", sessionsById: new Map([[session.id, session]]) });
+const refRows = findAll(refList, hasClass("scrow"));
+if (refRows.length !== 1) {
+  throw new Error("a session shortcut must be listed in its container, got " + refRows.length);
+}
+const refRow = refRows[0];
+// The label comes from the target, so the row carries the session's own title —
+// a live reference must never read 失效的快捷方式.
+if (!textOf(refRow).includes(session.displayTitle)) {
+  throw new Error("a live reference must show the target's title, got " + JSON.stringify(textOf(refRow)));
+}
+if (textOf(refRow).includes("失效")) throw new Error("a resolvable reference must not be called 失效的快捷方式");
+// The tag is text, not a glyph swap: the row says 快捷方式 in words.
+if (findAll(refRow, hasClass("scmark")).length !== 0) throw new Error("no badge marker is drawn any more");
+// The row's tag is the 快捷方式 caption itself, and it carries the lifecycle
+// rule: deleting it removes the pointer, the payload stays where it lives.
+const refTag = findAll(refRow, hasClass("wstag"))[0] ?? null;
+if (!refTag) throw new Error("a shortcut row keeps its 快捷方式 caption");
+if (!String(refTag.props.title ?? "").includes("只移除标注")) {
+  throw new Error("the shortcut caption must state the rule, got " + JSON.stringify(refTag.props.title));
+}
+// The glyph is the target's own kind of icon: a session is a chat, not an arrow.
+if (mod.__test.iconOfNode?.(refTree.nodes["s-1"], refTree) !== "chat") {
+  throw new Error("a session shortcut must borrow the session icon, got " + mod.__test.iconOfNode?.(refTree.nodes["s-1"], refTree));
+}
+if (mod.__test.nodeLabel?.(refTree.nodes["s-1"], refTree, () => session) !== session.displayTitle) {
+  throw new Error("a live reference must resolve to its target's title");
+}
+// The tree draws the same row with the same treatment.
+const refTreePane = render({
+  type: TreePane,
+  props: {
+    tree: refTree, scope: "f-root", onSelect: noop, expanded: new Set(["f-root", "f-favorites"]),
+    onToggle: noop, width: 260, onMove: noop, rename: null, onBeginRename: noop,
+    sessionsById: new Map([[session.id, session]]),
+  },
+});
+const refTreeRow = findAll(refTreePane, hasClass("sc"))[0] ?? null;
+if (!refTreeRow) throw new Error("the tree must draw the reference row");
+if (!textOf(refTreeRow).includes("快捷方式")) throw new Error("the tree row must carry the same 快捷方式 tag");
+if (!textOf(refTreeRow).includes(session.displayTitle)) throw new Error("the tree row names its target");
+// A session shortcut resolves to its session, so a row that points at nothing
+// is the only thing that may be called 失效的快捷方式.
+console.log("reference row ok: tag + target icon, tree and list agree");
 
 const detailProps = {
   now: Date.now(), onClose: noop, onHint: noop, width: 320, parent: null, children: [], forks: [],
