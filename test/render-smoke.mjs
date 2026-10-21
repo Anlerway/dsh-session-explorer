@@ -13,6 +13,7 @@
  * every component's render body evaluates against realistic data.
  */
 import { readFileSync } from "node:fs";
+import { decorateTree } from "../lib/domain/tree-rules.js";
 
 // A minimal class base, because PanelBoundary is the one class component in the
 // bundle (an error boundary has no hook equivalent).
@@ -269,6 +270,11 @@ const tree = {
   counts: { "f-root": 1, "f-all": 1, "f-trash": 0, "f-ungrouped": 0, "f-todos": 0, "f-favorites": 0, "w-ws-1": 1, "d-1": 0 },
   roots: ["f-root", "f-trash"],
 };
+// The client holds no rule table: it reads the facts the host ships on every
+// node (`accepts`, `hasWorkspace`, `scope`, `ref`). Decorating the fixture with
+// the real host function is what keeps this harness honest — a fixture written
+// by hand would drift from /bootstrap and prove nothing.
+decorateTree(tree);
 console.log("TreePane ok:", Boolean(render({
   type: TreePane,
   props: { tree, scope: "f-root", onSelect: noop, expanded: new Set(["f-root"]), onToggle: noop, width: 260, onMove: noop, rename, onBeginRename: noop },

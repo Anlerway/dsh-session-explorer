@@ -17,7 +17,7 @@ session store — **without ever touching the physical layout of `~/.dsh`**.
 > | Surface | What it is |
 > |---|---|
 > | **浮窗** (`lib/client.js`) | The full explorer. Opened from the sidebar entry. |
-> | **独立窗口** (`assets/detached/`) | The **same explorer UI**, ported class-for-class from `lib/client.js`, in its own frameless OS window. It does not load the DSH app: it is plain DOM (no React, no build step) talking to the same `/session-explorer/api` through the helper preload, which is the only thing holding the token. Same markup, same layout, same icons — only the host adapter differs. |
+> | **独立窗口** (`assets/detached/`) | The **same explorer UI** in its own frameless OS window: the page loads `lib/client.js` itself, so there is one implementation, not two. It does not load the DSH app — same markup, same layout, same icons, same behaviour, and only the host adapter differs. |
 >
 > 导出会话 writes Markdown or JSONL through `GET /export`, from the detail pane or the
 > row menu. Text is the only media: attachments and binary tool output are described,
@@ -44,8 +44,8 @@ lib/
   http.js             {ok,result} / {ok,error,code} envelopes
   capabilities.js     defensive service probe
   paths.js            data-directory resolution (env → settings → .location)
-  domain/             pure rules: tree, folders, shortcuts, sessions, annotations,
-                      settings, trash, export
+  domain/             pure rules: tree-rules (the only copy), tree building,
+                      folders, shortcuts, sessions, annotations, settings, trash, export
   sources/            read pipeline: headers, projection cache, artifacts, registry
   store/              sidecar documents with atomic writes and revisions
   host/               actions, trash, move, datadir, bridge, theme
@@ -118,7 +118,7 @@ Everything answers with one of two envelopes:
 | `GET /tags`, `POST /tags`, `DELETE /tags/:tag` | The shared tag library |
 | `PATCH /annotations/:id` | Tags, note, favorite, todo for one session |
 | `POST /folders`, `PATCH /folders/:id`, `DELETE /folders/:id` | Virtual folders (`?lift=0` deletes the contents too) |
-| `POST /nodes/:id/move`, `POST /nodes/:id/order` | Reparent or reorder a folder/workspace node |
+| `POST /nodes/:id/move` | Reparent a folder/workspace node |
 | `POST /nodes/:id/pin` | 置顶 a folder or a workspace (DSH pins sessions; this pins containers, and both land in one band) |
 | `POST /shortcuts`, `DELETE /shortcuts/:id` | 快捷方式: a reference to a folder, a workspace or a session. The target never moves |
 | `POST /sessions/placement` | Show sessions in another container without moving them (see below) |
@@ -132,13 +132,42 @@ Everything answers with one of two envelopes:
 | `POST /move` | Cross-workspace move or copy |
 | `POST /trash`, `POST /restore`, `POST /purge`, `POST /trash/empty` | The bin: move the payload out, put it back, delete it for good, empty it |
 | `GET /datadir`, `POST /datadir/inspect`, `POST /datadir/migrate` | Describe, pre-flight and perform the data-directory move |
-| `GET /component/status`, `/component/events` (SSE), `POST /component/{install,cancel,remove,retry}` | The optional browser component |
-| `POST /detached/{open,focus,close}` | The detached window |
+| `GET /component/status`, `POST /component/{install,cancel,remove,retry}` | The optional browser component (progress is polled, not streamed) |
+| `POST /detached/{open,close}` | The detached window |
 | `POST /bridge/commands`, `GET /bridge/events` (SSE) | The panel ↔ window command bus |
 
 Mutating routes accept an expected revision through `If-Match` or a `revision` field in the
 body; omitting both means last-writer-wins. A stale revision answers `409 revision-conflict`
-and the client reloads instead of clobbering.
+and the client reloads instead of clobbering. The panel sends it: every write cites the
+revision of the store it touches (`/settings` → settings, `/tags` + `/annotations` →
+annotations, everything else → the tree) and adopts the revision the write answers with, so
+two windows cannot silently overwrite each other.
+
+### One tree, one copy of the rules
+
+Where a node may go used to be implemented three times: `lib/domain/tree.js` for the host,
+a static shell that no longer exists, and `lib/client.js` for greying out a bad drop. All of
+it now lives in `lib/domain/tree-rules.js`, and the client holds no rule table at all — it
+reads facts the host derives:
+
+| Field on a tree node | Means |
+|---|---|
+| `accepts.session` | A session row may live here (a workspace or 未分组) |
+| `accepts.folder` | Two facts in one: directories may be dropped here, and this node takes rows at all |
+| `accepts.workspace` | A workspace may go here — already false for anything under another workspace |
+| `accepts.shortcut` | A 快捷方式 may be filed here |
+| `hasWorkspace` | Its subtree contains a workspace, so dropping one here would nest them |
+| `scope` | `tree` / `all` / `favorites` / `todos` / `trash` / `none`: which sessions the view lists |
+| `ref` | For a shortcut row, the node it points at |
+
+Each session carries `home`: the node it is *shown* in (its placement override, else its
+workspace, else 未分组), plus `homeOverride` for whether that was an override. The client's
+whole cycle check is a subtree walk over `children`.
+
+Because the count of a node and the rows it lists are computed by the same function
+(`sessionsOfNode`), a badge cannot disagree with its list — the bug class that produced
+"收藏 says 3, shows 2" is gone rather than fixed. `test/tree-mirror.test.mjs` pins the client's
+drop predicate against the host's verdict for every ordered pair of nodes.
 
 ### Virtual session placement
 
