@@ -1,0 +1,34 @@
+name: test
+
+# The plugin has no dependencies and no build step, so there is nothing to
+# install and nothing to compile: the whole job is "run the tests on the Node
+# versions package.json promises".
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: node ${{ matrix.node }}
+    # windows-latest only, deliberately. The shipping target is the DSH desktop
+    # app, and lib/component/layout.js pins win32 asset names for the Electron
+    # runtime behind 独立窗口. A Linux job would report on a platform this
+    # plugin does not install onto; add it here the day that changes.
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # engines: "^22.15.0 || >=24.0.0"
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # Quoted so Node expands the pattern itself: cmd.exe and pwsh do not, and
+      # the same command has to work on the developer's shell too.
+      - run: node --test "test/*.test.mjs"
+      - run: node test/render-smoke.mjs

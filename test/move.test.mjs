@@ -136,14 +136,14 @@ function apiWith(home, registry) {
 // ── path encoding ───────────────────────────────────────────────────────────
 
 test("projectKey reproduces DSH's directory names", () => {
-  assert.equal(projectKey("C:\\Users\\mi\\Desktop\\session-explorer"), "--C-Users-mi-Desktop-session-explorer--");
-  assert.equal(projectKey("C:\\Users\\mi\\.dsh\\dsh_orb"), "--C-Users-mi-.dsh-dsh_orb--");
+  assert.equal(projectKey("C:\\Users\\alice\\Desktop\\session-explorer"), "--C-Users-alice-Desktop-session-explorer--");
+  assert.equal(projectKey("C:\\Users\\alice\\.dsh\\dsh_orb"), "--C-Users-alice-.dsh-dsh_orb--");
   // The observed escaped names: spaces become ~0020, parentheses ~0028/~0029.
   assert.equal(
-    projectKey("C:\\Users\\mi\\Downloads\\新建文件夹 (2)"),
-    "--C-Users-mi-Downloads-~65B0~5EFA~6587~4EF6~5939~0020~00282~0029--",
+    projectKey("C:\\Users\\alice\\Downloads\\新建文件夹 (2)"),
+    "--C-Users-alice-Downloads-~65B0~5EFA~6587~4EF6~5939~0020~00282~0029--",
   );
-  assert.equal(projectKey("C:\\Users\\mi\\Downloads\\新建文件夹"), "--C-Users-mi-Downloads-~65B0~5EFA~6587~4EF6~5939--");
+  assert.equal(projectKey("C:\\Users\\alice\\Downloads\\新建文件夹"), "--C-Users-alice-Downloads-~65B0~5EFA~6587~4EF6~5939--");
 });
 
 test("encodeSegment escapes exactly what DSH escapes", () => {

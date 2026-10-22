@@ -1,0 +1,14 @@
+# One line ending in the repository: LF. Whoever checks out on Windows gets
+# whatever core.autocrlf says, but the blob, the diff and the blame stay LF.
+* text=auto eol=lf
+
+# The vendored React builds are minified single-line files. Normalising them
+# would rewrite the whole blob for a one-character change, and diffing them is
+# noise: they are replaced wholesale when the version changes, not edited.
+*.min.js -text
+
+# Windows launchers and preload scripts are plain source, not binaries.
+*.cjs text eol=lf
+
+# No binary assets ship with this plugin. If one ever does, mark it here so it
+# never travels through the text filters.
