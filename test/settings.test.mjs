@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { join, parse } from "node:path";
 
 import {
+  HEADER_STYLES,
   MAX_DIM,
   MODAL_FIXED_SIZES,
   MODAL_PERCENT_SIZES,
@@ -72,6 +73,31 @@ test("a launch-mode patch merges without disturbing the modal group", () => {
   assert.equal(merged.shell.open.mode, "detached");
   assert.equal(merged.shell.modal.sizing, "fixed");
   assert.equal(merged.shell.modal.size, "md");
+});
+
+test("会话界面按钮样式 is a closed vocabulary, defaulting to 自动", () => {
+  // A document written before the key existed keeps the responsive behaviour
+  // the strip always had, not a surprise icon-only bar.
+  assert.equal(defaultSettings().shell.header.style, "auto");
+  assert.equal(normalizeSettings({}).shell.header.style, "auto");
+  assert.deepEqual([...HEADER_STYLES], ["auto", "icon"]);
+  for (const style of HEADER_STYLES) {
+    assert.equal(normalizeSettings({ shell: { header: { style } } }).shell.header.style, style);
+  }
+  // Anything else falls back instead of reaching the strip as an unknown value.
+  for (const bad of ["icons", "text", "", true, 1]) {
+    assert.equal(normalizeSettings({ shell: { header: { style: bad } } }).shell.header.style, "auto");
+  }
+});
+
+test("a header-style patch merges without disturbing its siblings", () => {
+  const merged = mergeSettings(defaultSettings(), { shell: { header: { style: "icon" } } });
+  assert.equal(merged.shell.header.style, "icon");
+  assert.equal(merged.shell.open.mode, "panel");
+  assert.equal(merged.shell.modal.size, "md");
+  // A later patch that only touches 打开方式 keeps the saved button style.
+  const again = mergeSettings(merged, { shell: { open: { mode: "detached" } } });
+  assert.equal(again.shell.header.style, "icon");
 });
 
 test("sizing modes and presets are closed vocabularies", () => {

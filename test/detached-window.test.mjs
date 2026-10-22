@@ -192,6 +192,11 @@ test("the window's page loads one UI, from the Host's own origin", () => {
   ]);
 
   assert.ok(PAGE.includes('href="/session-explorer/api/ui/window.css"'), "the window stylesheet");
+  // The tab and taskbar show the plugin's own folder mark, not a blank page.
+  assert.ok(
+    PAGE.includes('<link rel="icon" type="image/png" href="/session-explorer/api/ui/icon.png">'),
+    "the window favicon",
+  );
   assert.ok(!/<script(?![^>]*\bsrc=)/.test(PAGE), "no inline script");
 
   // Same origin is what lets the module's own fetch() calls reach the API.
@@ -208,6 +213,7 @@ test("the Host serves the page, its stylesheet, its shim and the panel's module"
     "GET /ui/client.js",
     "GET /ui/react.js",
     "GET /ui/react-dom.js",
+    "GET /ui/icon.png",
   ]) {
     assert.ok(HOST.includes(`"${route}"`), `route ${route} is registered`);
   }
@@ -219,6 +225,7 @@ test("the Host serves the page, its stylesheet, its shim and the panel's module"
     "lib/client.js",
     "assets/vendor/react.production.min.js",
     "assets/vendor/react-dom.production.min.js",
+    "assets/icon.png",
   ]) {
     assert.ok(existsSync(here(file)), `${file} exists`);
   }

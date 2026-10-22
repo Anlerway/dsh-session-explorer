@@ -95,6 +95,88 @@ test("the registry decides the workspace, not the projection cache", () => {
   assert.equal(view.sessions.find((s) => s.id === "s2").workspaceId, null);
 });
 
+/**
+ * One workspace, one ordinary session in it, and whatever children a test adds.
+ *
+ * DSH's registry lists only sessions a user opened from a workspace, which is
+ * exactly why a delegated child is missing from `sessionIds` here.
+ */
+function registryOf(extra = {}) {
+  return {
+    workspaceIds: ["w1"],
+    workspaces: new Map([
+      ["w1", { id: "w1", title: "project", path: "C:\\p", sessionIds: ["p"] }],
+    ]),
+    archivedSessionIds: [],
+    pinnedSessionIds: [],
+    defaultWorkspaceId: "w1",
+    ...extra,
+  };
+}
+
+test("a subagent inherits its parent's workspace instead of 未分组", () => {
+  // The bug (m00002 ①): a delegated child is created by its parent and never
+  // appears in workspace.sessionIds, so it used to reach placementOfNode with
+  // workspaceId null and was filed under 未分组 while its parent sat in w1.
+  const view = viewOf(
+    [
+      { id: "p", cwd: "C:\\p" },
+      { id: "c", origin: "subagent", delegationDepth: 1, parentSession: "p", cwd: "C:\\p" },
+    ],
+    { registry: registryOf() },
+  );
+  const child = view.sessions.find((s) => s.id === "c");
+  assert.equal(child.isSubagent, true);
+  assert.equal(child.workspaceId, "w1");
+  assert.equal(child.workspaceTitle, "project");
+});
+
+test("workspace inheritance follows a whole delegation chain", () => {
+  // A subagent may delegate again; the grandchild is not in the registry either,
+  // so one hop would leave it ungrouped.
+  const view = viewOf(
+    [
+      { id: "p", cwd: "C:\\p" },
+      { id: "c", delegationDepth: 1, parentSession: "p", cwd: "C:\\p" },
+      { id: "g", delegationDepth: 2, parentSession: "c", cwd: "C:\\p" },
+    ],
+    { registry: registryOf() },
+  );
+  assert.equal(view.sessions.find((s) => s.id === "g").workspaceId, "w1");
+});
+
+test("an orphaned subagent falls back to an exact cwd match", () => {
+  // Its parent is not listed, so the parent link is pruned; the cwd is still the
+  // workspace path, which is the same witness DSH uses for the workspace.
+  const view = viewOf(
+    [{ id: "c", origin: "subagent", delegationDepth: 1, parentSession: "gone", cwd: "C:\\p\\" }],
+    { registry: registryOf() },
+  );
+  const child = view.sessions.find((s) => s.id === "c");
+  assert.equal(child.parentSession, null);
+  assert.equal(child.workspaceId, "w1");
+});
+
+test("a subagent whose parent and cwd are both unknown stays unplaced", () => {
+  const view = viewOf(
+    [{ id: "c", origin: "subagent", delegationDepth: 1, parentSession: "gone", cwd: "C:\\elsewhere" }],
+    { registry: registryOf() },
+  );
+  assert.equal(view.sessions.find((s) => s.id === "c").workspaceId, null);
+});
+
+test("a fork is not dragged into its source's workspace", () => {
+  // Forks are siblings, not delegations; only subagents inherit.
+  const view = viewOf(
+    [
+      { id: "p", cwd: "C:\\p" },
+      { id: "f", parentSession: "p", isSeeded: true, cwd: "C:\\other" },
+    ],
+    { registry: registryOf() },
+  );
+  assert.equal(view.sessions.find((s) => s.id === "f").workspaceId, null);
+});
+
 test("displayTitle falls back to the cwd folder name", () => {
   assert.equal(displayTitleOf({ title: "real title", cwd: "C:\\x", id: "s" }), "real title");
   assert.equal(displayTitleOf({ title: "", cwd: "C:\\work\\proj", id: "s" }), "proj");

@@ -167,6 +167,7 @@ function settingsDocument(mode, component) {
         open: { mode },
         modal: { sizing: "fixed", size: "md", percent: "p70", dim: 0, closeOnBackdrop: true },
         window: { alwaysOnTop: false, bounds: null },
+        header: { style: "auto" },
       },
       list: { autoCollapse: false, showArchived: true },
       dataDir: { current: null },
@@ -188,7 +189,11 @@ async function renderSettings({ mode = "panel", component = "absent" } = {}) {
       return { ok: true, result: settingsDocument(mode, component) };
     }
     if (path === "/settings" && call.method === "PUT") {
-      return { ok: true, result: { settings: settingsDocument(call.body.shell.open.mode, component).settings, revision: 5 } };
+      // The stub answers with the document a real host would now hold: the
+      // patch applied, so a re-render shows the saved value.
+      const doc = settingsDocument(call.body.shell?.open?.mode ?? mode, component);
+      if (call.body.shell?.header) doc.settings.shell.header = call.body.shell.header;
+      return { ok: true, result: { settings: doc.settings, revision: 5 } };
     }
     // The component group re-probes on mount and reports the phase upward, so
     // the launch chips have to agree with it — a stub that answered nothing
@@ -251,4 +256,30 @@ test("a document written before the setting existed shows 浮窗, not an empty g
   const tree = await driver.settle(() => page(driver, api, t));
   const chips = collect(tree, byClass("se-set-chip"));
   assert.match(chips[0].props.className, /\bon\b/);
+});
+
+test("会话界面 offers 自动 and 仅显示图标, and saves the pick alone", async () => {
+  const { tree, calls, driver, api, t } = await renderSettings({ mode: "panel", component: "absent" });
+  const groups = collect(tree, byClass("se-set-grp"));
+  const header = groups.find((group) => textOf(group).includes("setGroupHeader"));
+  assert.ok(header, "the group is on the page");
+
+  const chips = collect(header, byClass("se-set-chip"));
+  assert.deepEqual(chips.map(textOf), ["setHeaderAuto", "setHeaderIcon"]);
+  assert.match(chips[0].props.className, /\bon\b/, "自动 is the default");
+
+  chips[1].props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const write = calls.find((call) => call.method === "PUT" && call.url.endsWith("/settings"));
+  assert.ok(write, "the click writes immediately");
+  // A patch of exactly this key: the launch mode and the modal group are not
+  // echoed back from a page that may have been open for a while.
+  assert.deepEqual(write.body, { shell: { header: { style: "icon" } } });
+
+  const after = await driver.settle(() => page(driver, api, t));
+  const afterHeader = collect(after, byClass("se-set-grp")).find((group) =>
+    textOf(group).includes("setGroupHeader"),
+  );
+  const afterChips = collect(afterHeader, byClass("se-set-chip"));
+  assert.match(afterChips[1].props.className, /\bon\b/, "仅显示图标 is now the chosen chip");
 });

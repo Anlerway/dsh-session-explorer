@@ -104,7 +104,7 @@ lib/
 │  └─ reader.js       206  三源合并 + TTL 缓存策略（/bootstrap 的数据源）
 │
 ├─ domain/                  纯规则，无 IO，可直接单测
-│  ├─ sessions.js     201  合并三源 → 扁平会话列表（header 定身份，cache 只填空）
+│  ├─ sessions.js     267  合并三源 → 扁平会话列表（header 定身份，cache 只填空）
 │  ├─ tree.js         405  树投影：workspace 节点 + 固定节点 + 用户文件夹
 │  ├─ tree-rules.js   437  规则表 R1–R5 的唯一实现（accepts / scope / ref 装饰）
 │  ├─ folders.js      237  新建/重命名/移动/删除文件夹（改 tree draft）
@@ -158,7 +158,7 @@ lib/
 | `sidebar.footer.action` | `session-explorer-footer` | 40 | `FooterAction` | 侧栏底部入口，开/关浮窗 |
 | `settings.section` | `session-explorer` | 510 | `SettingsSection` | 设置页分组（label 是 thunk，跟随语言） |
 | `settings.onboarding` | `session-explorer-opener` | 900 | 匿名 | 只为拿到 `openSection` 后立即 `complete()`，不留 UI |
-| `conversation.session.header.actions` | `session-explorer-header` | 60 | `SessionHeaderActions` | 会话标题栏五个按钮 |
+| `conversation.session.header.actions` | `session-explorer-header` | 60 | `SessionHeaderActions` | 会话标题栏五个按钮（样式跟随设置 `shell.header.style`） |
 | `sidebar.workspaces.session.menu.item` | `session-explorer-rows` | 500 | `SessionMenuItems` | 会话行 "…" 菜单两条 |
 
 **effect**（随插件卸载自动清理）：
@@ -189,6 +189,12 @@ GET /bootstrap  →  一次往返把面板需要的全部东西给客户端
 客户端**不重算任何规则**：`tree-rules.js` 在节点上装饰 `accepts` / `scope` / `ref` /
 `hasWorkspace`，客户端只读这些字段、只沿 `children` 走两件事（子树、父链）。
 `test/tree-mirror.test.mjs` 守着这条线：客户端可以留一个"拖拽时先灰掉"的谓词，但不能有第二套规则表。
+
+归属（`workspaceId`）在 `domain/sessions.js` 里定，且**沿父链继承**：DSH 的
+`workspace.sessionIds` 只登记用户从工作区打开的会话，子代理是父会话创建的，永远不在里面。
+所以一个 `isSubagent` 且没有登记的会话，按 `parentSession` 向上找最近一个已归属的祖先，
+继承它的 `workspaceId` / `workspaceTitle`；整条链都没有归属时才退回到 `cwd` 与工作区
+路径的**精确**比较。fork 不是子代理（只有 `parentSession` + `isSeeded`），不参与继承。
 
 ## 7. 硬约束（写代码前先读这一节）
 
