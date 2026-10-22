@@ -70,6 +70,11 @@ staging 目录故意放在 `component/` **外面**（`<dataDir>/.component-stagi
 下载用系统的 `curl` 子进程，`--progress` 由轮询 `.part` 的大小得到（`PROGRESS_INTERVAL_MS`），
 而不是解析 curl 的输出。
 
+**体积上限** 1 GiB（`MAX_ASSET_BYTES`，`lib/component/downloader.js:42`）：`content-length`
+超限在写第一个字节前就拒（`component-download-too-large`），实际落盘超限同样拒；curl 侧还有
+`--max-filesize` 兜底。正常的 Electron 包约 110 MB，一个数量级的余量足够，同时把"被劫持的镜像
+先写满磁盘再被摘要拒掉"变成"直接拒掉"。
+
 ## 4. 状态机
 
 `PHASES`（`lib/component/state.js:25`）：`absent` / `downloading` / `verifying` / `extracting` /
@@ -84,12 +89,18 @@ staging 目录故意放在 `component/` **外面**（`<dataDir>/.component-stagi
 | 2 | 磁盘检查 | 需要 `downloadBytes × 2.2 + 500 MB` 空闲，不够就 `component-disk-full`（507） |
 | 3 | `downloading` | 依次试镜像，`AbortController` + 1 小时超时（`INSTALL_TIMEOUT_MS`） |
 | 4 | `verifying` | `verifyZip()` 比对固定 SHA-256 |
-| 5 | `extracting` | 先清空 staging（上一次中断可能留着锁住的 bundle），再解压；解压后必须能找到可执行文件，否则 `component-extract-failed` |
+| 5 | `extracting` | 先清空 staging（上一次中断可能留着锁住的 bundle），再解压；解压后必须能找到可执行文件，否则 `component-extract-failed`。解压子进程接同一个 `AbortSignal`，超时/取消会 `SIGKILL` 它，而不是让 `tar` 在后台继续写 |
 | 6 | 发布 | `publishRuntime()` 到 `runtime-<stamp>`，写 `manifest.v1.json`，删 `.part` 与 `.part.json` |
 | 7 | 扫旧 | `sweepRuntimes()` 删旧运行时；删不掉的进 `pending-cleanup.v1.json` |
 | 8 | `ready` | `receivedBytes: 0`，`source` 记录来源 |
 
 取消（`component-cancelled`）回到 `absent` 且不留错误；其它失败进 `error` 并把消息写进 state。
+
+**卸载前先关窗口，而且"关掉了"必须是真的**：`remove()` 调 `closeHelper()`（即
+`api.detached.close()`），只有它返回 `true` 才继续（`lib/component/manager.js:549-552`）。
+`close()` 的返回值因此是"现在确实没有在跑的 helper"：先发 `close` 消息，1.5 秒后还在就 `SIGTERM`，
+再 0.5 秒后还在就 `SIGKILL`，最后用 `exitCode !== null` 判断（`lib/detached/launcher.js:318-345`）。
+以前它无条件返回 `true`，于是一个不理会退出信号的窗口会让 `remove` 删掉它正在用的可执行文件。
 
 ## 5. 卸不掉的 111 KB
 

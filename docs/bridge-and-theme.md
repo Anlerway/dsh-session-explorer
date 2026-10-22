@@ -58,6 +58,7 @@ payload 只接受三个字符串字段，各自截到 200 字符：
 event: ready
 data: {"cursor":42,"kinds":["open-session","new-session","reveal","refresh","open-settings"]}
 
+id: 43
 event: command
 data: {"seq":43,"kind":"open-session","payload":{…},"createdAt":1730000000000}
 
@@ -66,10 +67,18 @@ data: {"seq":43,"kind":"open-session","payload":{…},"createdAt":1730000000000}
 
 - `ready` 先发，带上当前游标和允许的 kind，客户端据此决定要补哪些；
 - 紧接着补发 `since` 之后的命令（一次往返就能追上，不用第二次请求）；
-- 之后是实时的 `command`；
+- 之后是实时的 `command`，每帧带 `id: <seq>`；
 - 每 **15 秒**一条注释帧 `: keep-alive`，防止中间层掐掉空闲连接（`keepAlive.unref()`，
   它不该阻止进程退出）；
 - `req.on("close" | "aborted")` 时清定时器、退订、`end()`。
+
+**重连不重放**：`EventSource` 断线后会自己重连同一个 URL，并带上 `Last-Event-ID`。服务端优先
+读这个头，读不到才回落到查询参数 `since`（`lib/index.js:969-973`）。没有这一步，重连会从
+首次连接的游标开始补发，`new-session` 就开两个窗口。
+
+**背压与上限**：`res.write()` 返回 `false` 表示套接字缓冲已满，此时直接结束这条流——面板会带
+`Last-Event-ID` 重连，从它真正收到的最后一帧继续，而不是让缓冲无限增长。同时订阅者上限 32
+（`MAX_LISTENERS`，`lib/host/bridge.js:35`），满了回 `503`：重连风暴不能把卡住的响应再叠一层。
 
 SSE 而不是轮询：命令是**事件**，而唯一会变的数字（下载百分比）走的是轮询——两者的性质不同。
 

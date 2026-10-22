@@ -18,7 +18,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -169,8 +169,47 @@ test("readArtifact decodes every frame and keeps event order", async () => {
   }
 });
 
-test("inheritedCutOf finds the final inherited marker", () => {
-  assert.equal(inheritedCutOf([{ seq: 0 }, { seq: 1, type: "session/end-seed", data: { inherited: true } }]), 2);
+test("a log whose tail is still being written exports everything before it", async () => {
+  const box = await sandbox();
+  try {
+    const { log } = await writeSession(box.home, "proj", "s1");
+    // A writer halfway through appending an event: the frame is torn, so the
+    // file no longer ends with a complete line.
+    const torn = zstdCompressSync(Buffer.from(JSON.stringify({ seq: 2, type: "turn/start" })));
+    await appendFile(log, torn.subarray(0, 8));
+
+    await assert.rejects(
+      () => readArtifact(log),
+      (error) => error.code === "session-corrupt",
+      "a rewrite must still refuse to guess what the torn frame held",
+    );
+    const artifact = await readArtifact(log, { tolerateTail: true });
+    assert.deepEqual(artifact.events.map((event) => event.seq), [0, 1], "the complete frames are all exported");
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("an export drops the half-written JSON line instead of failing", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "se-artifact-"));
+  try {
+    const log = join(dir, "session.v4.jsonl");
+    const lines = [
+      JSON.stringify({ type: "session", version: 4, id: "s1", cwd: "C:/work" }),
+      JSON.stringify({ seq: 0, type: "turn/start" }),
+      '{"seq":1,"type":"tur',
+    ];
+    await writeFile(log, lines.join("\n"));
+
+    await assert.rejects(() => readArtifact(log), (error) => error.code === "session-corrupt");
+    const artifact = await readArtifact(log, { tolerateTail: true });
+    assert.deepEqual(artifact.events.map((event) => event.seq), [0]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("inheritedCutOf finds the final inherited marker", () => {  assert.equal(inheritedCutOf([{ seq: 0 }, { seq: 1, type: "session/end-seed", data: { inherited: true } }]), 2);
   assert.equal(inheritedCutOf([{ seq: 0 }, { seq: 1, type: "session/end-seed", data: {} }]), null);
   assert.equal(isContiguousLog([{ seq: 0 }, { seq: 1 }]), true);
   assert.equal(isContiguousLog([{ seq: 0 }, { seq: 2 }]), false);

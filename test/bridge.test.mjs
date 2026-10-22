@@ -124,3 +124,20 @@ test("normalizeCommand tolerates a missing or non-object payload", () => {
   assert.deepEqual(normalizeCommand({ kind: "refresh", payload: "nope" }), { kind: "refresh", payload: {} });
   assert.deepEqual(normalizeCommand({ kind: "refresh", payload: { sessionId: 42 } }), { kind: "refresh", payload: {} });
 });
+
+test("a full bus refuses a new listener instead of growing without bound", () => {
+  const bridge = createBridge();
+  /** @type {Array<() => void>} */
+  const stops = [];
+  for (let index = 0; index < 32; index += 1) stops.push(bridge.subscribe(() => {}));
+  assert.equal(bridge.listeners, 32);
+  assert.equal(bridge.subscribe(() => {}), null, "the ceiling is a refusal, not a silent drop");
+
+  // A listener that goes away frees its slot, so the panel reconnecting after a
+  // closed tab is not locked out by the connections it left behind.
+  stops[0]();
+  assert.equal(bridge.listeners, 31);
+  const stop = bridge.subscribe(() => {});
+  assert.equal(typeof stop, "function");
+  assert.equal(bridge.listeners, 32);
+});

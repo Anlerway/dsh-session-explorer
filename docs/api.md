@@ -230,7 +230,9 @@ DSH 还握着旧路径的写句柄，从底下挪走会损坏尾部。
 失败的那条进 `errors: [{ sessionId, code, message }]` 并同时计入 `skipped`，其余照常恢复。
 
 `GET /export` 对回收站里的会话返回 `session/not-found`——payload 已经不在 DSH 的树里了，
-回收站只留一份描述。
+回收站只留一份描述。导出**容忍正在写入的尾部**（`readArtifact(…, { tolerateTail: true })`）：
+最后一个不完整的帧或半行被丢掉，前面的完整事件照常导出。读来重写的路径（move/trash）不能
+容忍——它必须保留每一个字节的去向。
 
 ### 4.6 workspace
 
@@ -297,7 +299,9 @@ payload 只接受 `sessionId` / `workspaceId` / `scope` 三个字符串字段，
 
 `GET /bridge/events` 先发 `event: ready`（带当前 `cursor` 和允许的 kinds），再补发
 `since` 之后的命令，之后是实时的 `event: command`；每 15 秒一条 `: keep-alive` 注释帧。
-细节见 [bridge-and-theme.md](bridge-and-theme.md)。
+命令帧带 `id: <seq>`，重连时服务端优先读 `Last-Event-ID` 头而不是 URL 里的 `since`；订阅者
+上限 32，满了回 `503`；`res.write()` 返回 `false` 时直接结束流，让客户端带 `Last-Event-ID`
+重连，而不是让缓冲涨下去。细节见 [bridge-and-theme.md](bridge-and-theme.md)。
 
 `POST /detached/open` 在组件未 `ready` 时返回 404 `component-not-installed`。
 
