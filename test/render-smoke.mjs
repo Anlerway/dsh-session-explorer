@@ -642,7 +642,7 @@ for (const name of ["conversation.session.header.actions", "sidebar.workspaces.s
   if (!registered.some(([slot]) => slot === name)) throw new Error("the plugin must inject into " + name);
 }
 
-const idleActions = headerActionsFor(null, tKey);
+const idleActions = headerActionsFor({}, tKey);
 if (idleActions.map((action) => action.key).join(",") !== "archive,favorite,todo,reveal,delete") {
   throw new Error("the header must offer the five actions in DSH's order: " + JSON.stringify(idleActions.map((a) => a.key)));
 }
@@ -650,6 +650,15 @@ if (idleActions.map((action) => action.label).join(",") !== "hdrArchive,hdrFavor
   throw new Error("a live session must read 归档/收藏/待办/查看/删除: " + JSON.stringify(idleActions.map((a) => a.label)));
 }
 if (idleActions.some((action) => action.disabled)) throw new Error("a live session must leave every header action enabled");
+
+// "Not read yet" is not "no flags set". The strip decides what a press will
+// write from this state, so until it arrives — or if reading it failed — every
+// write waits. Carrying the previous session's state over made the strip offer
+// 取消收藏 on a session that was never favorited and then write that.
+const unknownActions = headerActionsFor(null, tKey);
+if (unknownActions.some((action) => !action.disabled)) {
+  throw new Error("an unread session state must not offer a write: " + JSON.stringify(unknownActions.filter((a) => !a.disabled).map((a) => a.key)));
+}
 
 const onActions = headerActionsFor({ archived: true, favorite: true, todo: true }, tKey);
 if (onActions[0].label !== "hdrUnarchive" || onActions[1].label !== "hdrUnfavorite" || onActions[2].label !== "hdrUntodo") {
@@ -666,7 +675,7 @@ if (trashedActions.filter((action) => action.disabled).map((action) => action.ke
 }
 // One write at a time: the annotations document is revision-guarded, so a second
 // click while one is in flight would just lose the race.
-const busyActions = headerActionsFor(null, tKey, "archive");
+const busyActions = headerActionsFor({}, tKey, "archive");
 if (busyActions.some((action) => !action.disabled)) throw new Error("a write in flight must disable every header action");
 
 const strip = render({ type: SessionHeaderActions, props: { sessionId: "session-1", t: tKey } });
@@ -677,7 +686,10 @@ if (stripButtons.length !== 5) throw new Error("the strip must render five butto
 if (stripButtons.map((button) => button.props["data-action"]).join(",") !== "archive,favorite,todo,reveal,delete") {
   throw new Error("the strip's buttons must carry their action: " + JSON.stringify(stripButtons.map((b) => b.props["data-action"])));
 }
-if (stripButtons.some((button) => button.props.disabled)) throw new Error("an unknown session state must not look disabled");
+// The strip renders before this session's state is known, and a press at that
+// moment would be decided from nothing — so it starts disabled and enables once
+// the state lands.
+if (stripButtons.some((button) => !button.props.disabled)) throw new Error("a strip that has not read its state must not offer a write");
 
 // Every button is icon + word: the icon is a 16x16 inline svg stroked with
 // currentColor (so 删除 can paint it red), and the word lives in .se-hdrLabel,

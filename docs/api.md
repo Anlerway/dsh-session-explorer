@@ -324,4 +324,6 @@ payload 只接受 `sessionId` / `workspaceId` / `scope` 三个字符串字段，
 
 `lib/client.js` 里 `storeOf(path)` / `revisionOf(path)` 负责把响应塞进订阅式 store，
 所有写请求都带 `If-Match`。客户端不解析 `error` 文案，只按 `code` 分支；
-`revision-conflict` 的处理是重新 `GET /bootstrap?refresh=1` 再让用户重试。
+`revision-conflict` 的处理是重新 `GET /bootstrap?refresh=1` 再让用户重试，
+设置页同理——它重读 `GET /settings` 并采用新的 `revision`，否则每个控件都会带着
+同一个陈旧的 `If-Match` 一直 409（`lib/client.js` `SettingsSection.save`）。
