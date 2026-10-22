@@ -64,7 +64,7 @@ bad-request`，而不是悄悄当没给——否则一个写错的头会变成"�
 |---|---|---|
 | `bad-request` / `gateway/bad-request` | 400 | 参数缺失或形状不对 |
 | `session/title-invalid` / `workspace/name-conflict` | 400 | DSH 拒绝的标题 / 重名 |
-| `subagent-unsupported` | 400 | 该会话不能派生（子代理会话） |
+| `subagent-unsupported` | 400 | 子智能体会话不能单独操作：它跟随父会话（见 §3.2） |
 | `session/not-found` / `workspace/not-found` / `trash-not-found` | 404 | 目标不存在 |
 | `component-not-installed` | 404 | 浏览器组件未就绪 |
 | `target-exists` / `session-active` / `session-corrupt` | 409 | 目标已存在 / 会话在跑 / 日志损坏 |
@@ -100,6 +100,26 @@ curl -X POST -H 'content-type: application/json' -d '{"ids":["s1"]}' \
 ```
 
 没有 `Sec-Fetch-Site` 的请求（curl、脚本、本机工具）照常放行——它们不是跨站浏览器请求。
+
+### 3.2 子智能体的绑定
+
+子智能体是父会话一次委派的产物，DSH 仍然把它写成完整的会话目录，但它不是用户可以
+单独处置的会话。规则集中在 `lib/domain/subagents.js`，路由侧只有一个入口
+`assertStandalone(api, ids)`（`lib/index.js:1131`）：
+
+| 操作 | 子智能体 | 为什么 |
+|---|---|---|
+| 读 / 打开 / 导出 / 显示位置 | 允许 | 只读 |
+| 删除、还原、清空 | 拒绝；由父会话级联 | 父会话删除时子会话一起走（`withDescendants`），单独删会留下孤儿委派 |
+| 剪切 / 复制 / 移动 | 拒绝 | 搬走子会话等于把它提升成独立会话，父会话的委派历史就断了 |
+| 收藏 / 待办 / 重命名 | 拒绝 | 这些字段描述"用户的会话"，而子会话属于父会话的那次运行 |
+| 归档 | 拒绝；由父会话派生 | `sessions.js` 的 `archivedUp` 让子会话跟着祖先的归档态，写一条 per-child 记录会让"这次运行归档了"变成 N 条事实 |
+| 派生（fork） | 拒绝 | 分叉是给会话开副本，子会话没有可开的东西 |
+
+`isSubagent` 由 header 决定（`origin === "subagent"`，或 `origin === null && delegationDepth > 0`），
+**不是** `parentSession` 非空：fork 也带 `parentSession`，但它是用户要的独立会话，所有操作都正常。
+客户端在 `session-state` 的响应里拿到同一个 `subagent` 位，据此隐藏按钮、只读行菜单，并给行
+加 `bound-row`/`chk-bound` 标记——隐藏是礼貌，上面这张表才是规则。
 
 ## 4. 路由
 
@@ -213,7 +233,10 @@ DSH 自己的归属（`lib/index.js:1021`）。两者都由 host 算好，客户
 - 归档不搬文件，只在列表里降级；有会话在跑时需 `stopActivity: true`。
 - `fork` 省略 `atSeq` 时与官方默认一致：从最后一个完成的回合继续。
 - 派生失败的子代理会话返回 `subagent-unsupported`。
-
+- 所有"单独改存储"的路由（`/trash`、`/restore`、`/purge`、`/move`、`/copy`、`/annotate`、
+  `/archive`、`/title`、`/fork`）先过 `assertStandalone`：ids 里只要有一个子智能体就整单拒绝
+  `subagent-unsupported`，不做"跳过后继续"。规则在 `lib/domain/subagents.js`，理由在
+  §3.2；`/trash`、`/restore`、`/purge` 接受父会话后由 `withDescendants` 把整条委派链一起带走。
 `POST /move`（`lib/host/move.js`）是唯一会**改会话文件**的操作：重写 header 的 `cwd` + 搬目录
 + 换 registry 登记，三件事一个事务；只有其中一件成功会导致下次启动找不到会话。
 `copy: true` 写第二份独立会话（新 id）而不是移动。有会话在跑时拒绝（`session-active`）——

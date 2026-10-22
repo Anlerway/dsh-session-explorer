@@ -112,8 +112,9 @@ lib/
 │  ├─ annotations.js  246  标签、备注、收藏/待办
 │  ├─ settings.js     262  设置文档形状与归一化
 │  ├─ trash.js        210  回收站条目形状、恢复阶梯
+│  ├─ subagents.js    107  子智能体绑定：isBound / descendantsOf / withDescendants / boundIds
 │  ├─ export.js       236  日志 → Markdown / JSONL（处理 surfaceOp 遮蔽）
-│  └─ session-state.js 34  单个会话的三个布尔（给 DSH 自己的按钮用）
+│  └─ session-state.js 40  单个会话的布尔位（给 DSH 自己的按钮用，含 subagent）
 │
 ├─ store/                   自己的持久化
 │  ├─ sidecar.js      238  原子写 + revision + 串行化 + mtime/size 缓存
@@ -195,6 +196,12 @@ GET /bootstrap  →  一次往返把面板需要的全部东西给客户端
 所以一个 `isSubagent` 且没有登记的会话，按 `parentSession` 向上找最近一个已归属的祖先，
 继承它的 `workspaceId` / `workspaceTitle`；整条链都没有归属时才退回到 `cwd` 与工作区
 路径的**精确**比较。fork 不是子代理（只有 `parentSession` + `isSeeded`），不参与继承。
+
+子智能体的**操作**也绑定在父会话上，规则同样只在一处：`domain/subagents.js`。它回答三个问题——
+`isBound`（能不能单独动）、`descendantsOf`（父会话走了谁跟着走）、`withDescendants`（级联的实际
+id 列表）。路由侧统一用 `assertStandalone()` 拒绝单独操作（`subagent-unsupported`），回收站三条
+路由再用 `withDescendants()` 把整条委派链一起带走；归档不写子会话，靠 `sessions.js` 的
+`archivedUp` 从祖先派生。客户端只消费 `session-state` 里的 `subagent` 位，不自己判断。
 
 ## 7. 硬约束（写代码前先读这一节）
 

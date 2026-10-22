@@ -18,6 +18,7 @@ import {
   MODAL_PERCENT_SIZES,
   MODAL_SIZING,
   OPEN_MODES,
+  SUBAGENT_MODES,
   defaultSettings,
   mergeSettings,
   modalSizeOf,
@@ -90,14 +91,32 @@ test("会话界面按钮样式 is a closed vocabulary, defaulting to 自动", ()
   }
 });
 
-test("a header-style patch merges without disturbing its siblings", () => {
-  const merged = mergeSettings(defaultSettings(), { shell: { header: { style: "icon" } } });
+test("a header-style patch merges without disturbing its siblings", () => {  const merged = mergeSettings(defaultSettings(), { shell: { header: { style: "icon" } } });
   assert.equal(merged.shell.header.style, "icon");
   assert.equal(merged.shell.open.mode, "panel");
   assert.equal(merged.shell.modal.size, "md");
   // A later patch that only touches 打开方式 keeps the saved button style.
   const again = mergeSettings(merged, { shell: { open: { mode: "detached" } } });
   assert.equal(again.shell.header.style, "icon");
+});
+
+test("折叠子智能体 is a closed vocabulary, folded by default", () => {
+  // Folded is the default because a child is not a session the user can act on:
+  // a run that delegated ten times must not push ten dead rows into the list.
+  assert.equal(defaultSettings().list.subagents, "collapsed");
+  assert.equal(normalizeSettings({}).list.subagents, "collapsed");
+  assert.deepEqual([...SUBAGENT_MODES], ["collapsed", "expanded"]);
+  for (const mode of SUBAGENT_MODES) {
+    assert.equal(normalizeSettings({ list: { subagents: mode } }).list.subagents, mode);
+  }
+  for (const bad of ["open", "collapsed ", "", true, 0]) {
+    assert.equal(normalizeSettings({ list: { subagents: bad } }).list.subagents, "collapsed");
+  }
+  // The list group merges as one shallow object, so a later toggle keeps it.
+  const merged = mergeSettings(defaultSettings(), { list: { subagents: "expanded" } });
+  assert.equal(merged.list.subagents, "expanded");
+  assert.equal(merged.list.showArchived, true);
+  assert.equal(mergeSettings(merged, { list: { showArchived: false } }).list.subagents, "expanded");
 });
 
 test("sizing modes and presets are closed vocabularies", () => {

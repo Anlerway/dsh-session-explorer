@@ -237,6 +237,50 @@ console.log("SessionRow (trashed) ok:", Boolean(render({
   props: { session: { ...session, trashed: true }, selected: false, now: Date.now(), onSelect: noop, checked: false, onCheck: noop, onBeginRename: noop },
 })));
 
+// ── 子智能体 rows (P32) ─────────────────────────────────────────────────────
+// A child row is not a session the user can act on: it has no checkbox, no
+// rename pencil and no drag handle, and it says so with a bound glyph and a 子
+// tag. The parent row, in turn, carries the count and the twist that opens it.
+const childRow = render({
+  type: SessionRow,
+  props: {
+    session: { ...session, id: "child-1", isSubagent: true, parentSession: "session-1", delegationDepth: 1 },
+    selected: false,
+    now: Date.now(),
+    onSelect: noop,
+    checked: false,
+    onCheck: noop,
+    depth: 1,
+    onBeginRename: noop,
+  },
+});
+const childClasses = findAll(childRow, hasClass("bound-row"));
+if (childClasses.length !== 1) throw new Error("a subagent row must carry .bound-row");
+if (findAll(childRow, hasClass("chk")).length !== 0) throw new Error("a subagent row must not render a checkbox");
+if (findAll(childRow, hasClass("chk-bound")).length !== 1) throw new Error("a subagent row must show the bound glyph instead");
+if (findAll(childRow, hasClass("nm-editbtn")).length !== 0) throw new Error("a subagent row must not offer a rename pencil");
+if (childRow.props.draggable !== false) throw new Error("a subagent row must not be draggable");
+if (!textOf(childRow).includes("子")) throw new Error("a subagent row must carry the 子 tag");
+
+const parentRow = render({
+  type: SessionRow,
+  props: {
+    session,
+    selected: false,
+    now: Date.now(),
+    onSelect: noop,
+    checked: false,
+    onCheck: noop,
+    childCount: 2,
+    collapsed: true,
+    onToggleChildren: noop,
+    onBeginRename: noop,
+  },
+});
+if (findAll(parentRow, hasClass("twist")).length !== 1) throw new Error("a parent of subagents must render the twist");
+if (!textOf(parentRow).includes("2 子")) throw new Error("a parent must show how many subagents it holds");
+console.log("SessionRow (subagent binding) ok: bound glyph, 子 tag, parent count");
+
 const workspaceNode = { id: "w-ws-1", workspaceId: "ws-1", name: "project", path: "C:\\work", type: "workspace", kind: "workspace" };
 const folderNode = { id: "d-1", type: "folder", name: "文件夹", fixed: false, kind: "folder", parent: "f-root", order: 3 };
 const specialNode = { id: "f-favorites", type: "folder", name: "收藏", fixed: true, kind: "favorites", parent: "f-root", order: 3 };
@@ -294,6 +338,33 @@ const listPaneWith = (props) => render({ type: ListPane, props: {
   rename: null, onBeginRename: noop, ...props,
 } });
 console.log("ListPane ok:", Boolean(listPaneWith({ selected: session.id })));
+
+// ── a list that actually holds a subagent ───────────────────────────────────
+// The P32 regression: `nestSessions` was rewritten to call a predicate while
+// the list kept passing its Set, so *any* list containing a delegation threw
+// "collapsed.has is not a function" — 所有会话 failed to render on real data.
+// A list without children never reaches the call, which is why the fixture
+// above stayed green. These two renders pin both states.
+const parentSession = { ...session, id: "parent-1" };
+const childSession = { ...session, id: "child-1", isSubagent: true, parentSession: "parent-1", delegationDepth: 1 };
+const rowsWithIds = (element) =>
+  findAll(element, (cls) => cls.split(" ").includes("row")).filter((row) =>
+    ["parent-1", "child-1"].includes(row.props?.["data-id"]),
+  );
+
+const foldedList = listPaneWith({ sessions: [parentSession, childSession], collapsed: new Set(["parent-1"]) });
+const foldedRows = rowsWithIds(foldedList);
+if (foldedRows.length !== 1) throw new Error("a folded parent must be the only row, got " + foldedRows.length);
+if (foldedRows[0].props["data-id"] !== "parent-1") throw new Error("the folded list must keep the parent row");
+
+const openList = listPaneWith({ sessions: [parentSession, childSession], collapsed: new Set() });
+const openRows = rowsWithIds(openList);
+if (openRows.length !== 2) throw new Error("an open parent must list its child, got " + openRows.length);
+const childRowInList = openRows.find((row) => row.props["data-id"] === "child-1");
+if (!childRowInList) throw new Error("the child row must be listed under its parent");
+if (!String(childRowInList.props.className).includes("sub-row")) throw new Error("the child row must be indented as a sub-row");
+if (!String(childRowInList.props.className).includes("bound-row")) throw new Error("the child row must carry .bound-row");
+console.log("ListPane (subagent rows) ok: folded 1 row, open 2 rows");
 
 // ── containers in the list ──────────────────────────────────────────────────
 // Three things are pinned here, all of which were invisible in the UI:

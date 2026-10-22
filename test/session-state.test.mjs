@@ -21,7 +21,7 @@ test("a live session with no annotations reads as all-false", () => {
     { annotations: annotations({}), trash: trash({}), sessions: [{ id: "session-1" }] },
     "session-1",
   );
-  assert.deepEqual(state, { id: "session-1", favorite: false, todo: false, archived: false, trashed: false });
+  assert.deepEqual(state, { id: "session-1", favorite: false, todo: false, archived: false, trashed: false, subagent: false });
 });
 
 test("the two annotation flags come from the entry, and only a real true counts", () => {
@@ -76,5 +76,25 @@ test("an unknown session answers all-false rather than throwing", () => {
     todo: false,
     archived: false,
     trashed: false,
+    subagent: false,
   });
+});
+
+test("subagent is the reader's own flag, and a fork is not one", () => {
+  // The header menu hides 收藏/待办/归档/删除 behind this one bit, so it has to
+  // come from the reader (which knows origin/delegationDepth), never from
+  // `parentSession` — a fork also carries a parent and is a session of its own.
+  const documents = {
+    annotations: annotations({}),
+    trash: trash({}),
+    sessions: [
+      { id: "child", isSubagent: true },
+      { id: "fork", isSubagent: false, isSeeded: true, parentSession: "session-1" },
+    ],
+  };
+  assert.equal(sessionStateOf(documents, "child").subagent, true);
+  assert.equal(sessionStateOf(documents, "fork").subagent, false);
+  // A truthy non-boolean is not the flag.
+  const loose = { ...documents, sessions: [{ id: "child", isSubagent: "yes" }] };
+  assert.equal(sessionStateOf(loose, "child").subagent, false);
 });
