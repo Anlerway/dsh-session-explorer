@@ -210,6 +210,39 @@ test("a digest mismatch is refused before anything is extracted", async () => {
   }
 });
 
+test("the start-up sweep deletes only paths inside component/", async () => {
+  const box = await sandbox();
+  try {
+    const dataDir = join(box.root, "data");
+    const paths = componentPaths(dataDir, "win32");
+    // A leftover install directory that the sweep is meant to remove, and a
+    // directory outside the plugin's own tree. The pending list is plain JSON on
+    // disk: a corrupt or edited file must not turn the sweep into `rm -rf`.
+    const leftover = join(paths.root, "runtime-old");
+    const outside = join(box.root, "documents");
+    await mkdir(leftover, { recursive: true });
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(leftover, "electron.exe"), "x");
+    await writeFile(join(outside, "keep.txt"), "keep");
+    await writeFile(
+      paths.pending,
+      JSON.stringify({ paths: [leftover, outside, join(box.root, "..", "escape")] }),
+      "utf8",
+    );
+
+    const manager = createComponentManager(dataDir);
+    const result = await manager.sweep();
+
+    assert.equal(existsSync(leftover), false);
+    assert.equal(existsSync(join(outside, "keep.txt")), true);
+    assert.deepEqual(result.remaining, []);
+    // The ignored paths are dropped from the list, not retried forever.
+    assert.equal(existsSync(paths.pending), false);
+  } finally {
+    await box.cleanup();
+  }
+});
+
 test("publishRuntime keeps the previous runtime when the new one is staged", async () => {
   const box = await sandbox();
   try {

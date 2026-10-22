@@ -107,6 +107,10 @@ staging 目录故意放在 `component/` **外面**（`<dataDir>/.component-stagi
 **下次启动**（持有句柄的进程正是启动的这个）再扫一遍，仍删不掉的留到再下次。
 `status()` 里的 `pendingCleanup` 就是给设置页解释"磁盘占用为什么对不上"用的。
 
+这份 JSON 是纯磁盘文件，可以被改坏或手改，而扫描会 `removeTree` 递归删除。所以读取时只接受
+`component/` 之内的路径（`lib/component/manager.js` 的 `readPending` + `lib/paths.js` 的
+`isInside`），越界条目直接丢弃——坏文件不能让启动清理变成删任意目录。
+
 ## 6. 窗口怎么起来
 
 `lib/detached/` 三件：

@@ -89,14 +89,14 @@ handler(api, req, res, query, params)
 
 ```
 lib/
-├─ index.js          1290  插件装配 + 路由表 + 错误映射（唯一编排层）
-├─ http.js             93  信封、body 解析、URL 切分
+├─ index.js          1362  插件装配 + 路由表 + 错误映射（唯一编排层）
+├─ http.js            101  信封、body 解析、URL 切分
 ├─ constants.js        30  API_PREFIX / PLUGIN_ID / FIXED_NODES / WORKSPACE_NODE_PREFIX
 ├─ capabilities.js     73  Cordis 服务的防御式探测
-├─ paths.js           225  数据目录解析、`.location` 指针、原子写临时目录清理
+├─ paths.js           327  数据目录解析、`.location` 指针、原子写临时目录清理
 │
 ├─ sources/                 读 DSH 的数据（只读，除 move 的受控重写）
-│  ├─ heads.js        155  L2：sessions 目录遍历 + 只解 zstd 第一帧取 header
+│  ├─ heads.js        230  L2：sessions 目录遍历（按实际版本名取最新日志，并发 8，结果排序）
 │  ├─ projcache.js    177  L1：storages/session_projcache 的每会话小 JSON
 │  ├─ workspaces.js   127  workspace registry：优先活服务，回退 storages/workspace.json
 │  ├─ artifact.js     214  会话文件路径编码/解码、读日志、重写 header
@@ -109,20 +109,20 @@ lib/
 │  ├─ folders.js      237  新建/重命名/移动/删除文件夹（改 tree draft）
 │  ├─ shortcuts.js    204  快捷方式：引用而非移动
 │  ├─ annotations.js  246  标签、备注、收藏/待办
-│  ├─ settings.js     256  设置文档形状与归一化
-│  ├─ trash.js        187  回收站条目形状、恢复阶梯
+│  ├─ settings.js     262  设置文档形状与归一化
+│  ├─ trash.js        210  回收站条目形状、恢复阶梯
 │  ├─ export.js       236  日志 → Markdown / JSONL（处理 surfaceOp 遮蔽）
 │  └─ session-state.js 34  单个会话的三个布尔（给 DSH 自己的按钮用）
 │
 ├─ store/                   自己的持久化
-│  ├─ sidecar.js      204  原子写 + revision + 串行化 + mtime/size 缓存
-│  └─ documents.js    126  四份侧车文档的注册表
+│  ├─ sidecar.js      238  原子写 + revision + 串行化 + mtime/size 缓存
+│  └─ documents.js    130  四份侧车文档的注册表
 │
 ├─ host/                    需要动文件系统或跨进程的操作
 │  ├─ actions.js      302  改名/派生/归档/置顶 → 调 DSH 自己的服务
-│  ├─ trash.js        375  删除/恢复/清空的字节搬运
-│  ├─ move.js         465  跨 workspace 移动/复制（重写 header cwd + 换登记）
-│  ├─ datadir.js      346  数据目录检查与七步迁移
+│  ├─ trash.js        452  删除/恢复/清空的字节搬运
+│  ├─ move.js         561  跨 workspace 移动/复制（重写 header cwd + 换登记）
+│  ├─ datadir.js      380  数据目录检查与七步迁移
 │  ├─ bridge.js       155  命令环形缓冲 + 游标
 │  └─ theme.js        103  调色板令牌白名单与校验
 │
@@ -131,7 +131,7 @@ lib/
 │  ├─ state.js        160  state.v1.json 生命周期机
 │  ├─ downloader.js   311  curl 流式下载（断点续传、镜像、进度）
 │  ├─ install.js      363  校验 → 解压 → 原子发布
-│  └─ manager.js      660  单飞状态机（install/cancel/remove 共享一把锁）
+│  └─ manager.js      667  单飞状态机（install/cancel/remove 共享一把锁）
 │
 ├─ detached/
 │  ├─ launcher.js     360  Host 侧：spawn / 重试 / 聚焦 / 关闭、net 控制通道
