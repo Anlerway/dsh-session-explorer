@@ -118,13 +118,29 @@ test("client shortcutTarget resolves the same target the host ships as ref", () 
  */
 test("every directory's badge is the number of rows it renders", () => {
   const live = sessions;
+  // A row is a session or a reference to one. A reference is not another
+  // session, so it adds to the container's badge without adding to the total.
+  const referenceRows = (id) => {
+    let total = 0;
+    const stack = [...(tree.children[id] ?? [])];
+    while (stack.length > 0) {
+      const child = stack.pop();
+      if (tree.nodes[child]?.kind === "shortcut") {
+        total += 1;
+        continue;
+      }
+      stack.push(...(tree.children[child] ?? []));
+    }
+    return total;
+  };
   for (const node of Object.values(tree.nodes)) {
     if (node.kind === "shortcut" || !node.accepts.folder) continue;
-    const rows = sessionsOfNode(node.id, { sessions: live }, tree, { trashedIds: new Set() }).length;
+    const rows =
+      sessionsOfNode(node.id, { sessions: live }, tree, { trashedIds: new Set() }).length + referenceRows(node.id);
     if (node.id === FIXED_NODES.root) {
       // 根目录 lists directories, not sessions — the one documented exception.
       assert.equal(tree.counts[node.id], live.length, "根目录 counts every live session");
-      assert.equal(rows, 0, "but it lists none");
+      assert.equal(sessionsOfNode(node.id, { sessions: live }, tree, { trashedIds: new Set() }).length, 0, "but it lists none");
       continue;
     }
     assert.equal(tree.counts[node.id], rows, `${node.id} (${node.name}) badge vs rows`);

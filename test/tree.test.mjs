@@ -394,7 +394,7 @@ test("a folder keeps the sessions placed directly in it when it aggregates", () 
   assert.equal(tree.counts["d-own"], 3);
 });
 
-test("a shortcut row never contributes to the container it sits in", () => {
+test("a shortcut row is one row, and it never adds to the session total", () => {
   const tree = buildAutoTree({
     registry,
     sessions,
@@ -404,8 +404,12 @@ test("a shortcut row never contributes to the container it sits in", () => {
       shortcuts: { "s-ref": { kind: "session", targetId: "s2", parent: "d-box", order: 0 } },
     },
   });
-  // wa holds s1+s2; the reference row is a row, not two more sessions.
-  assert.equal(tree.counts["d-box"], 2);
+  // The badge counts the rows under the container — s1, s2 and the reference to
+  // s2 — while the session total stays two: a reference is a second sighting of
+  // a session that already exists, so it may never be counted as another one.
+  assert.equal(tree.counts["d-box"], 3);
+  assert.equal(tree.counts[FIXED_NODES.all], sessions.length);
+  assert.equal(tree.counts[FIXED_NODES.root], sessions.length);
 });
 
 test("a reference to a session survives a trashing and dies with the payload", () => {
@@ -460,4 +464,65 @@ test("trashed sessions leave the live views and appear only in the trash", () =>
     sessionsOfNode(FIXED_NODES.trash, view, tree, { trashedIds: trashed }).map((s) => s.id),
     ["s1"],
   );
+});
+
+test("a reference whose container is gone is dropped, not re-parented to the root", () => {
+  // 根目录 holds directories (canHoldShortcuts(f-root) is false), so rooting a
+  // reference produced a row no branch rendered and no gesture could remove.
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: { shortcuts: { "s-ref": { kind: "session", targetId: "s2", parent: "d-gone", order: 0 } } },
+  });
+  assert.equal(tree.nodes["s-ref"], undefined);
+  assert.equal(tree.children[FIXED_NODES.root].includes("s-ref"), false);
+});
+
+test("a reference to a folder or workspace that is gone is not built", () => {
+  // A session reference has always died with its payload; these two kinds used
+  // to survive their target and render as a row that opens nothing.
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: {
+      shortcuts: {
+        "s-folder": { kind: "folder", targetId: "d-gone", parent: FIXED_NODES.favorites, order: 0 },
+        "s-live": { kind: "workspace", targetId: "wb", parent: FIXED_NODES.favorites, order: 1 },
+        "s-dead": { kind: "workspace", targetId: "wz", parent: FIXED_NODES.favorites, order: 2 },
+      },
+    },
+  });
+  assert.equal(tree.nodes["s-folder"], undefined, "the folder it pointed at does not exist");
+  assert.ok(tree.nodes["s-live"], "a reference to a real workspace still renders");
+  assert.equal(tree.nodes["s-dead"], undefined, "the workspace it pointed at does not exist");
+});
+
+test("a folder that holds only a reference shows one row", () => {
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: {
+      folders: { "d-box": { id: "d-box", name: "盒子", parent: FIXED_NODES.root, order: 0 } },
+      shortcuts: { "s-ref": { kind: "session", targetId: "s2", parent: "d-box", order: 0 } },
+    },
+  });
+  assert.deepEqual(tree.children["d-box"], ["s-ref"]);
+  assert.equal(tree.counts["d-box"], 1, "the badge counts the row that is actually there");
+});
+
+test("a reference does not make its folder carry a workspace", () => {
+  // Moving the folder must not be refused because it happens to hold a link to
+  // a workspace: the workspace does not travel with it.
+  const tree = buildAutoTree({
+    registry,
+    sessions,
+    userTree: {
+      folders: { "d-box": { id: "d-box", name: "盒子", parent: FIXED_NODES.root, order: 0 } },
+      shortcuts: { "s-w": { kind: "workspace", targetId: "wb", parent: "d-box", order: 0 } },
+    },
+  });
+  assert.equal(canMove("d-box", "w-wa", tree).ok, true, "a folder holding only a reference may move into a workspace");
+  // And a reference dropped into the node it points at is not a cycle.
+  assert.equal(canMove("s-w", "w-wb", tree).ok, true, "a reference may sit in its own target");
+  assert.equal(canMove("s-w", "d-box", tree).ok, true, "and in any other container");
 });

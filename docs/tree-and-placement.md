@@ -35,20 +35,27 @@
 | **R2** | 会话的容器是它的 workspace 节点；没有 workspace 就是 `f-ungrouped` | `placementOfNode()` |
 | **R3** | 会话只在一个容器里被数一次 | `sessionsOfNode()` 同时产出列表和徽章数字 |
 | **R4** | 收藏/待办装的是快捷方式（引用）而不是会话；引用不改变总数，根目录自己也不装会话 | `counts[...]` 的赋值 |
-| **R5** | 父节点消失的节点降级到根，而不是让子树变孤儿；环永远构造不出来 | `folderParent()` |
+| **R5** | 父节点消失的**目录**降级到根，而不是让子树变孤儿；环永远构造不出来 | `folderParent()` |
 
 R5 的降级是**纯函数**：`folderParent()` 只依赖 `folders` 表，与迭代顺序无关。
 父节点缺失、父节点不是文件夹、父链成环，三种情况一律回落到 `f-root`。
 
+降级只适用于文件夹和 workspace。**引用不降级**：`f-root` 装的是目录（`canHoldShortcuts(f-root)`
+为假），所以把一条父节点已消失的快捷方式挂到根上，只会得到一行没有任何分支渲染、也没有任何手势
+能删掉的行（`lib/domain/tree.js:278-296`）。这种情况直接不建这一行；容器消失时 host 会先把里面的
+引用上提（删文件夹 → 父节点，父节点是根则进 `f-收藏`；删 workspace → `f-收藏`）。
+
 ## 3. 徽章数字 == 列表行数
 
-`buildTree()` 最后那段计数不是"另一次过滤的模仿"，而是直接调用 `sessionsOfNode()` 的同一个函数：
+`buildTree()` 最后那段计数不是"另一次过滤的模仿"，而是直接调用 `sessionsOfNode()` 的同一个函数，
+再加上子树里的引用行：
 
 ```js
-counts[id] = sessionsOfNode(id, view, treeLike, { trashedIds: trashed }).length;
+counts[id] = sessionsOfNode(id, view, treeLike, { trashedIds: trashed }).length + shortcutRowsWithin(id);
 ```
 
-所以徽章不可能和它下面那几行对不上。四个例外各自有意义：
+**一行 = 一个会话，或一条指向会话的引用。** 所以徽章不可能和它下面那几行对不上——包括一个只装了一条
+引用的文件夹（以前它显示 0，展开却有 1 行）。四个例外各自有意义：
 
 - `f-root` 的列表是目录（空），但数字是活跃会话总数——那正是它旁边那个数的意思；
 - `f-favorites` / `f-todos` = 带标记的会话数 + 指向会话的快捷方式行数；
@@ -88,7 +95,8 @@ counts[id] = sessionsOfNode(id, view, treeLike, { trashedIds: trashed }).length;
 3. 引用不能活得比目标久。指向会话的引用在会话进回收站时**保留**（会话还能回来），
    一旦 payload 真的没了（清空回收站，或用户手工删了目录），这条引用就消失——
    否则用户会得到一行点了没反应、又不允许删的行。host 在 purge 时顺手清侧车，
-   保证下次重建不会把它带回来。
+   保证下次重建不会把它带回来。同样地，指向文件夹/workspace 的引用在目标不存在时也不建行
+   （`lib/domain/tree.js:289-291`）；而引用的**容器**不存在时也不建行，见 §2 的 R5 说明。
 
 标签不在快捷方式上：`name` 留空，客户端从目标解析，所以目标改名后引用自动跟上。
 
@@ -111,6 +119,10 @@ DSH 置顶的是**会话**；这里还有容器置顶（文件夹、workspace）
 
 `canMove()` 只用两条规则：不能进自己的子树（会整支掉出树）、workspace 不能套 workspace。
 其余组合全部自由：文件夹进文件夹、文件夹进 workspace、workspace 进文件夹、workspace 在根下。
+
+两条规则问的都是**结构**（`subtreeOf(id, tree, { followReferences: false })`）：引用不是父边，
+所以"装了一条指向 workspace W 的引用的文件夹"不算"带着 W"，把这条引用拖进 W 也不是环。
+列表那一侧仍然跟随引用（默认 `followReferences: true`），因为引用的意义就是显示目标的行。
 
 固定节点不可移动；客户端会先把非法目标变灰，但 host 一定会**再校验一次**——一个过期的客户端
 不应该能写出非法的树。

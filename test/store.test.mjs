@@ -342,3 +342,30 @@ test("a folder created through the domain layer is immediately usable by canMove
   // …and moving the folder into itself stays refused.
   assert.equal(canMove(id, id, after).ok, false);
 });
+
+test("a folder cannot be created inside a shortcut", () => {
+  // A shortcut is a reference, not a container. Accepting the parent anyway made
+  // the new folder appear at the root on the next build — the user dropped it
+  // into a row and it turned up somewhere else.
+  const draft = { folders: {}, placement: {}, workspaceOrder: {} };
+  const tree = treeWith({
+    shortcuts: { "s-r": { kind: "workspace", targetId: "wa", parent: FIXED_NODES.favorites, order: 0 } },
+  });
+  assert.ok(tree.nodes["s-r"], "the reference itself is a node");
+  assert.throws(() => createFolder(draft, { name: "x", parent: "s-r" }, tree, () => "nope"), /不能放文件夹/);
+});
+
+test("deleting a root-level folder sends its references to 收藏, not to the root", () => {
+  const draft = {
+    folders: { "d-a": { id: "d-a", name: "A", parent: FIXED_NODES.root, order: 0 } },
+    placement: {},
+    workspaceOrder: {},
+    shortcuts: { "s-r": { id: "s-r", kind: "workspace", targetId: "wa", parent: "d-a", order: 0 } },
+  };
+  const tree = treeWith({ folders: draft.folders, shortcuts: draft.shortcuts });
+  assert.deepEqual(tree.children["d-a"], ["s-r"]);
+  deleteFolder(draft, "d-a", tree, { liftContents: true });
+  // 根目录 holds directories only, so a reference lifted there would be a row
+  // nobody renders and no command can remove.
+  assert.equal(draft.shortcuts["s-r"].parent, FIXED_NODES.favorites);
+});
