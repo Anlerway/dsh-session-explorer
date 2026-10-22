@@ -28,6 +28,7 @@ import {
   trashSessions,
 } from "../lib/host/trash.js";
 import { ensureDataDir, dataPaths } from "../lib/paths.js";
+import { trashTargetDir } from "../lib/domain/trash.js";
 import { openDocuments } from "../lib/store/documents.js";
 import { createShortcut } from "../lib/domain/shortcuts.js";
 import { FIXED_NODES } from "../lib/constants.js";
@@ -221,7 +222,12 @@ test("restore refuses to overwrite a directory that reappeared", async () => {
     await trashSessions(api, ["s1"]);
     await mkdir(dir, { recursive: true });
 
-    await assert.rejects(() => restoreSessions(api, ["s1"]), (error) => error.code === "target-exists");
+    // Refused per entry, not by throwing the whole batch: the payload stays in
+    // the bin and the caller is told why.
+    const result = await restoreSessions(api, ["s1"]);
+    assert.deepEqual(result.restored, []);
+    assert.deepEqual(result.skipped, ["s1"]);
+    assert.equal(result.errors[0].code, "target-exists");
     const index = await api.documents.trash.read();
     assert.equal(index.entries.s1.pending, undefined, "the entry survives a refusal");
   } finally {
@@ -352,7 +358,7 @@ test("reconcile drops a pending entry whose payload never moved", async () => {
     await api.documents.trash.mutate((draft) => {
       draft.entries.s1 = {
         sessionId: "s1",
-        trashId: "t-crashed",
+        trashId: "t-crashed-1",
         title: "first",
         originalLogPath: join(dir, LOG),
         deletedAt: 1,
@@ -366,4 +372,14 @@ test("reconcile drops a pending entry whose payload never moved", async () => {
   } finally {
     await box.cleanup();
   }
+});
+
+test("a payload directory name cannot escape the trash directory", () => {
+  const paths = { trashDir: join(tmpdir(), "se-trash-root", "trash") };
+  // The id is read back from plain JSON on disk, so a hand edit must not be able
+  // to aim `rm -rf` at anything but a payload directly under `trash/`.
+  for (const bad of ["../../Documents", "..", "t-abc/../../x", "", "t-ABC-1", "t-abc-1/../../.."]) {
+    assert.throws(() => trashTargetDir(paths, bad), (error) => error.code === "trash-not-found", bad);
+  }
+  assert.equal(trashTargetDir(paths, "t-lz9x1a-abc123"), join(paths.trashDir, "t-lz9x1a-abc123"));
 });

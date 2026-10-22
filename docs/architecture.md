@@ -57,7 +57,7 @@ package.json
 
 ## 3. 一次请求的生命周期
 
-`handle(api, req, res)`（`lib/index.js:1182-1223`）：
+`handle(api, req, res)`（`lib/index.js:1189-1248`）：
 
 ```
 routeOf(req.url)                 // lib/http.js:88  剥掉 /session-explorer/api
@@ -65,10 +65,11 @@ routeOf(req.url)                 // lib/http.js:88  剥掉 /session-explorer/api
 compileRoute 匹配表               // lib/index.js:1145  段数相等 + :param 解码
   ↓ 无 → 404 no route for <METHOD> <path>
 迁移守卫                          // 非 GET/HEAD 且非 /datadir* → migration-in-progress
+assertSameOrigin(req)            // 非 GET/HEAD：跨站 / 非 JSON → 403 / 415
 readJsonBody(req)                // 非 GET/HEAD，上限 8 MiB（lib/http.js:57）
 handler(api, req, res, query, params)
   ↓ 正常 → ok(res, result)        // { ok: true, result }
-  ↓ 抛错 → statusFor(code)        // lib/index.js:1247  错误码 → HTTP 状态
+  ↓ 抛错 → statusFor(code)        // lib/index.js:1310  错误码 → HTTP 状态
            fail(res, status, code, message)
 ```
 
@@ -77,9 +78,12 @@ handler(api, req, res, query, params)
 - **信封唯一**：`{ ok: true, result }` / `{ ok: false, error, code }`（`lib/http.js:22-48`）。
   客户端只对 `code` 分支，`error` 只给人看。
 - **错误码直通**：DSH 原生错误带的命名空间码（`workspace/name-conflict`、
-  `session/title-invalid`）原样透出，不翻译，避免多一层会漂移的映射（`lib/index.js:1236`）。
+  `session/title-invalid`）原样透出，不翻译，避免多一层会漂移的映射（`lib/index.js:1274`）。
 - **SSE 例外**：`GET /bridge/events` 自己接管响应，`handle` 在 `headersSent` 时不再写信封
-  （`lib/index.js:1213-1215`）。
+  （`lib/index.js:1223`）。
+- **写请求必须同源**：没有 token，所以靠 `Sec-Fetch-Site` 与 `Content-Type: application/json`
+  这两个浏览器强制的信号拒绝跨站写（`lib/index.js` 的 `assertSameOrigin()`，见
+  [api.md](api.md#31-写请求的同源约束)）。
 
 ## 4. 分层
 

@@ -20,7 +20,8 @@ C:\Users\<user>\.dsh-session-explorer   ← 本插件的
 ├── annotations.v1.json   标签、备注、收藏/待办标记、共享标签库
 ├── settings.v1.json      跨浏览器的偏好（布局在 localStorage）
 ├── .location             迁移后留下的指针（只有 copy 模式会留）
-├── .tmp/                 原子写的临时文件，启动时清空
+├── .tmp/                 原子写的临时文件，启动时只清 `*.tmp`
+├── quarantine/           读不出来的文档原件（`<name>.corrupt-<ts>.json`）
 ├── trash/
 │   ├── index.v1.json     回收站索引
 │   └── <trashId>/        被删会话的 payload（整个会话目录）
@@ -39,7 +40,7 @@ C:\Users\<user>\.dsh-session-explorer   ← 本插件的
 
 ## 2. 定位顺序（三级回退）
 
-`resolveDataDir()`（`lib/paths.js:180`）按顺序：
+`resolveDataDir()`（`lib/paths.js:293`）按顺序：
 
 | 优先级 | 来源 | 场景 |
 |---|---|---|
@@ -50,8 +51,13 @@ C:\Users\<user>\.dsh-session-explorer   ← 本插件的
 `<默认>` 里的 `.location` 指针会被跟随（最多 8 跳，防止手改出的环卡住启动）。
 这就是 `copy` 模式迁移后旧树还在磁盘上、下次启动不会读到旧副本的原因。
 
-`DSH_SE_DATA_DIR` 是**校验过的**：解析结果若是文件系统根（`/`、`C:\`），忽略并警告，回落默认值。
-理由写在 `lib/paths.js:16-19`：在根目录下执行"清空回收站"是灾难。
+`DSH_SE_DATA_DIR` 是**校验过的**：解析结果若是文件系统根（`/`、`C:\`）、`~/.dsh` 本身或其内部，
+或者反过来**包含** `~/.dsh`（家目录就是最常见的误填），都忽略并警告，回落默认值。
+理由写在 `lib/paths.js:isUsableDataDir`：清空回收站会递归删掉数据目录下的 payload，
+一个能包含 DSH 数据的数据目录会把"清空回收站"变成"删掉 DSH"。
+
+同一条规则用在四个入口上：`DSH_SE_DATA_DIR`、已记录的 `dataDir.current`（`settings.v1.json`
+是磁盘上的普通 JSON，手改过的值不能直接信）、`POST /datadir/migrate` 的 body、以及迁移目标目录。
 
 ## 3. 四份侧车文档
 
@@ -97,9 +103,11 @@ C:\Users\<user>\.dsh-session-explorer   ← 本插件的
 - **不互相覆盖**：每次成功写入 `revision += 1`。客户端带着它看到的 revision 来，
   不匹配就 `revision-conflict`，而不是静默覆盖别人刚做的改动。
 
-读损坏（不是 JSON 对象）时文件被改名成 `<name>.corrupt-<ts>.json` 移进 `.tmp/`，
-然后以空文档重建——**不会**因为一个坏文件让插件起不来。启动时 `.tmp/` 整个清空，
-那里的东西永远是崩溃残留。
+读损坏（不是 JSON 对象）时文件被改名成 `<name>.corrupt-<ts>.json` 移进 `quarantine/`，
+然后以空文档重建——**不会**因为一个坏文件让插件起不来。
+放在 `quarantine/` 而不是 `.tmp/`：`.tmp/` 每次启动都会清空，那份"留着给人手工恢复"的原件
+会被自己删掉。启动时只清 `.tmp/` 下的 `*.tmp`（原子写的残留），`*.corrupt-*` 会被搬进
+`quarantine/`。
 
 ## 5. 回收站
 
@@ -113,7 +121,7 @@ C:\Users\<user>\.dsh-session-explorer   ← 本插件的
 
 跨卷时 rename 退化成 copy-then-delete，其余流程不变。
 
-**索引条目**（`lib/domain/trash.js:72`）：
+**索引条目**（`lib/domain/trash.js:95`）：
 
 ```jsonc
 {
@@ -134,7 +142,7 @@ C:\Users\<user>\.dsh-session-explorer   ← 本插件的
 "pending 但 payload 还在原地"——可对账，不是丢会话。下次启动的 `reconcileTrash` 收尾：
 payload 已经到位 → 升级为 ready；payload 从未离开 → 删掉这条记录。
 
-**恢复落点**（`projectDirFor()`，`lib/host/trash.js:181`）是三级阶梯：
+**恢复落点**（`projectDirFor()`，`lib/host/trash.js:255`）是三级阶梯：
 
 1. 记录里的原项目目录，不存在就重建；
 2. 同一 workspace 下还有会话的目录（让恢复的会话落在邻居旁边）；
@@ -159,14 +167,19 @@ payload 已经到位 → 升级为 ready；payload 从未离开 → 删掉这条
 | 6 | `recorded` | 把 `dataDir.current` 写进**新目录**的 `settings.v1.json` |
 | 7 | `pointer` / `pruned` / `removed` | `copy` 模式在旧目录留 `.location` 指针并清空其余内容（`pruned`）；`move` 模式直接删旧目录（`removed`） |
 
-任何一步失败都走同一个回滚（`lib/host/datadir.js:253`）：重开旧目录、失效缓存、删掉半成品目标目录。
+任何一步失败都走同一个回滚（`lib/host/datadir.js:204` 的 `rollbackCopy`）：重开旧目录、失效缓存，
+再**只删这次复制写进去的东西**——目标目录原本不存在就整个删掉，原本存在（空目录）就只删 `carry`
+写过的那些顶层条目。回滚不会删用户自己放进去的文件。
 **旧目录在成功之前从不被碰**，所以一次失败的迁移只损失那次复制。
 
 `mode` 不是用户选的，是**同卷性**决定的：同卷 `move`，跨卷 `copy`。
 `move` 是唯一会删旧目录的模式。
 
-`datadir-not-empty` 的判定是 `OCCUPANCY_MARKERS = ["tree.v1.json", "trash/index.v1.json"]`
-（`lib/host/datadir.js:40`）：目标里已经有这两者之一，说明那里是另一套安装，不能覆盖。
+`datadir-not-empty` 有两个来源（`lib/host/datadir.js:146-155`）：
+
+- `OCCUPANCY_MARKERS = ["tree.v1.json", "trash/index.v1.json"]` 在目标里出现，说明那里是另一套安装；
+- 目标目录存在且**非空**。迁移是往目标里复制、失败时按 `carry` 写过的条目回滚，所以目标必须从空开始；
+  否则要么两套数据混在一起，要么回滚时误删用户的文件。
 
 ## 7. 相关文件
 

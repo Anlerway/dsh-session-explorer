@@ -8,6 +8,8 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { homedir } from "node:os";
+import { join, parse } from "node:path";
 
 import {
   MAX_DIM,
@@ -118,10 +120,15 @@ test("remembered window bounds are validated, not echoed", () => {
   assert.equal(normalizeSettings({ shell: { modal: { bounds: good } } }).shell.window.bounds.width, 900);
 });
 
-test("a data directory is only remembered when it is a non-empty string", () => {
+test("a data directory is remembered only when it is a place the plugin may own", () => {
   assert.equal(normalizeSettings({ dataDir: { current: "C:/tmp/se" } }).dataDir.current, "C:/tmp/se");
   assert.equal(normalizeSettings({ dataDir: { current: "   " } }).dataDir.current, null);
   assert.equal(normalizeSettings({ dataDir: { current: 42 } }).dataDir.current, null);
+  // The string decides where a recursive delete runs, so a filesystem root and
+  // DSH's own tree are refused here instead of being echoed back to the UI.
+  assert.equal(normalizeSettings({ dataDir: { current: parse(process.cwd()).root } }).dataDir.current, null);
+  assert.equal(normalizeSettings({ dataDir: { current: join(homedir(), ".dsh", "sessions") } }).dataDir.current, null);
+  assert.equal(normalizeSettings({ dataDir: { current: homedir() } }).dataDir.current, null);
 });
 
 test("mergeSettings keeps known keys and drops unknown ones", () => {

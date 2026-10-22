@@ -12,7 +12,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
@@ -209,6 +209,51 @@ test("a failed migration rolls back and leaves the old directory intact", async 
     assert.equal(api.migration, null);
     const tree = await api.documents.tree.read();
     assert.equal(tree.folders["f-1"].name, "Reading");
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("a failed migration keeps a target directory the user already had", async () => {
+  const box = await sandbox();
+  try {
+    const current = join(box.root, "current");
+    const target = join(box.root, "next");
+    // The user made the directory; it is empty, so it is a legal target, but a
+    // rollback must empty it rather than remove it.
+    await mkdir(target, { recursive: true });
+    const api = await host(current);
+    const originalReopen = api.reopen;
+    api.reopen = (next) => {
+      originalReopen(next);
+      if (next === target) {
+        api.documents.settings.mutate = async () => {
+          throw new Error("disk full");
+        };
+      }
+    };
+
+    await assert.rejects(() => migrateDataDir(api, { target }), /disk full/);
+    api.reopen = originalReopen;
+
+    assert.equal(existsSync(target), true);
+    assert.deepEqual(await readdir(target), []);
+    assert.equal(api.dataDir, current);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("inspect refuses a target that already holds files", async () => {
+  const box = await sandbox();
+  try {
+    const api = await host(join(box.root, "current"));
+    const target = join(box.root, "next");
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "notes.txt"), "mine", "utf8");    await assert.rejects(
+      () => inspectDataDir(api, target),
+      (error) => error.code === "datadir-not-empty",
+    );
   } finally {
     await box.cleanup();
   }

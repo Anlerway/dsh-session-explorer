@@ -46,6 +46,7 @@ async function sandbox() {
       trashIndex: join(dir, "trash", "index.v1.json"),
       trashDir: join(dir, "trash"),
       tmpDir: tmp,
+      quarantine: join(dir, "quarantine"),
     },
     cleanup: () => rm(dir, { recursive: true, force: true }),
   };
@@ -125,11 +126,19 @@ test("a corrupt document is quarantined and replaced by an empty one", async () 
   const box = await sandbox();
   try {
     await writeFile(box.paths.tree, "{ not json", "utf8");
-    const doc = createSidecar({ path: box.paths.tree, tmpDir: box.paths.tmpDir, empty: () => ({ folders: {} }) });
+    const doc = createSidecar({
+      path: box.paths.tree,
+      tmpDir: box.paths.tmpDir,
+      quarantineDir: box.paths.quarantine,
+      empty: () => ({ folders: {} }),
+    });
     const value = await doc.read();
     assert.deepEqual(value.folders, {});
-    const quarantined = (await readdir(box.paths.tmpDir)).filter((name) => name.includes("corrupt"));
+    // Quarantine, not `.tmp`: `.tmp` is swept on every start, so parking the
+    // bytes there deleted the copy that exists to be recovered.
+    const quarantined = (await readdir(box.paths.quarantine)).filter((name) => name.includes("corrupt"));
     assert.equal(quarantined.length, 1);
+    assert.equal((await readdir(box.paths.tmpDir)).length, 0);
   } finally {
     await box.cleanup();
   }

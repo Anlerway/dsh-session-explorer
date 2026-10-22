@@ -1,7 +1,7 @@
 # HTTP API
 
 所有端点都挂在 `/session-explorer/api` 前缀下，由 `lib/index.js:354` 的 `ROUTES` 表定义，
-`lib/index.js:1182` 的 `handle()` 分发。共 **52 条**。
+`lib/index.js:1189` 的 `handle()` 分发。共 **52 条**。
 
 ## 1. 信封
 
@@ -18,7 +18,7 @@
 - 空 body 解析成 `{}`。
 
 **四条路由不写信封**，它们自己接管响应：`GET /bridge/events`（SSE）、`GET /export`（文件）、
-`GET /ui*`（静态资源）。`handle()` 在 `headersSent` 后不再追加信封（`lib/index.js:1213-1215`）。
+`GET /ui*`（静态资源）。`handle()` 在 `headersSent` 后不再追加信封（`lib/index.js:1223`）。
 
 ## 2. 通用约定
 
@@ -37,7 +37,7 @@
 ### 迁移守卫
 
 数据目录迁移期间（`api.migration !== null`），**除 `/datadir*` 之外的所有非 GET/HEAD 请求**
-一律 `409 migration-in-progress`（`lib/index.js:1205-1207`）。否则写入会落进正在被复制的旧目录。
+一律 `409 migration-in-progress`（`lib/index.js:1213`）。否则写入会落进正在被复制的旧目录。
 
 ### id 约定
 
@@ -54,7 +54,7 @@
 
 ## 3. 错误码 → HTTP 状态
 
-`lib/index.js:1247`。DSH 原生的命名空间码原样透出，不翻译。
+`lib/index.js:1310`。DSH 原生的命名空间码原样透出，不翻译。
 
 | code | 状态 | 含义 |
 |---|---|---|
@@ -69,8 +69,33 @@
 | `datadir-same` / `datadir-not-empty` / `migration-in-progress` | 409 | 数据目录迁移的三种拒绝 |
 | `component-busy` / `component-in-use` | 409 | 组件正在被别的操作占用 / 窗口开着不能删 |
 | `component-disk-full` | 507 | 磁盘不足 |
+| `disk-full` | 507 | 同上的通用码（写文件时 `ENOSPC`） |
+| `io-error` | 500 | 数据目录读不了（`ENOENT`/`EACCES`/`EIO`… 被翻译成这个，不再冒充 `bad-request`） |
+| `move-incomplete` / `move-rollback-failed` | 500 | 跨卷拷贝不完整、回滚没做完——会话**没有**被删，见 `move.js` |
 | `capability-missing` | 501 | 该 profile 缺这个服务 |
+| `cross-site` | 403 | 跨站写请求（`Sec-Fetch-Site: cross-site`） |
+| `unsupported-media-type` | 415 | 写请求没用 `application/json` |
 | 其它（含 `ui-asset-missing`） | 500 | 未预期的服务端故障 |
+
+### 3.1 写请求的同源约束
+
+路由挂在 DSH 自己的端口上，没有 token，所以浏览器里任何一个页面都能往这里 POST——
+响应它读不到，但 `POST /trash/empty` 已经生效了。`lib/index.js` 的 `assertSameOrigin()`
+用两个浏览器自己加、脚本伪造不了的信号堵住这条路（只对 `GET`/`HEAD` 以外的请求生效）：
+
+- `Sec-Fetch-Site: cross-site` → `403 cross-site`；
+- `Content-Type` 不是 `application/json` → `415 unsupported-media-type`。JSON 不是
+  CORS 的"简单内容类型"，跨站带这个头发请求会先触发预检，而 DSH 不应答预检。
+
+插件自己的前端一直带 `content-type: application/json; charset=utf-8`，所以不受影响。
+用 curl 手工调写接口要显式加这个头：
+
+```bash
+curl -X POST -H 'content-type: application/json' -d '{"ids":["s1"]}' \
+  http://127.0.0.1:63334/session-explorer/api/trash
+```
+
+没有 `Sec-Fetch-Site` 的请求（curl、脚本、本机工具）照常放行——它们不是跨站浏览器请求。
 
 ## 4. 路由
 
@@ -167,7 +192,7 @@ DSH 自己的归属（`lib/index.js:1021`）。两者都由 host 算好，客户
 | `POST /sessions/:id/fork` | `{ atSeq?: number }` | `{ sessionId, parentSessionId }` |
 | `POST /move` | `{ ids, target: { workspaceId }, copy? }` | `{ results }` |
 | `POST /trash` | `{ ids }` | `{ trashed, skipped }` |
-| `POST /restore` | `{ ids }` | `{ restored, skipped }` |
+| `POST /restore` | `{ ids }` | `{ restored, skipped, errors }` |
 | `POST /purge` | `{ ids }` | `{ purged, skipped }` |
 | `POST /trash/empty` | — | `{ purged }` |
 | `GET /export` | `?sessionId&format=md\|jsonl&download=1` | 文件本体 |
@@ -187,6 +212,8 @@ DSH 还握着旧路径的写句柄，从底下挪走会损坏尾部。
 
 `POST /trash` 是真移动：会话目录离开 DSH 的 sessions 树，所以 DSH 自己的侧栏里也会消失。
 恢复按 `original → workspace → ungrouped` 三级阶梯落地（见 [data-directory.md](data-directory.md)）。
+`POST /restore` 是**逐条**的：某一条恢复不了（目标路径又被占了、payload 中途消失）不会取消整批，
+失败的那条进 `errors: [{ sessionId, code, message }]` 并同时计入 `skipped`，其余照常恢复。
 
 `GET /export` 对回收站里的会话返回 `session/not-found`——payload 已经不在 DSH 的树里了，
 回收站只留一份描述。
