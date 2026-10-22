@@ -142,6 +142,10 @@ C:\Users\<user>\.dsh-session-explorer   ← 本插件的
 "pending 但 payload 还在原地"——可对账，不是丢会话。下次启动的 `reconcileTrash` 收尾：
 payload 已经到位 → 升级为 ready；payload 从未离开 → 删掉这条记录。
 
+**认领**：写 `pending` 这一步同时充当互斥锁。两个窗口同时删同一会话时，后到者在文档锁里看见
+条目已存在就放弃（记 `skipped`），不会各生成一个 trashId——否则后到者的补偿会删掉先到者的
+条目，留下一个没有索引指向的 payload，既恢复不了也清不掉（`lib/host/trash.js:218-234`）。
+
 **恢复落点**（`projectDirFor()`，`lib/host/trash.js:255`）是三级阶梯：
 
 1. 记录里的原项目目录，不存在就重建；

@@ -293,7 +293,38 @@ test("a live session is refused instead of being moved under its writer", async 
     await assert.rejects(
       () => moveSessions(api, { ids: ["s1"], target: { workspaceId: "w-target" } }),
       (error) => error.code === "session-active",
+      "a batch where nothing moved surfaces the failure instead of a 200 of refusals",
     );
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("one refused id does not cancel the ids that could move", async () => {
+  const box = await sandbox();
+  try {
+    const targetPath = join(box.root, "target-workspace");
+    await mkdir(targetPath, { recursive: true });
+    const registry = fakeRegistry([
+      { id: "w-target", title: "target", path: targetPath, sessionIds: [] },
+    ]);
+    const api = apiWith(box.home, registry);
+    api.ctx.sessions = { get: (id) => (id === "s1" ? { id: "s1" } : undefined) };
+    const live = await writeSession(box.home, "proj", "s1");
+    const idle = await writeSession(box.home, "proj", "s2");
+
+    const result = await moveSessions(api, { ids: ["s1", "s2"], target: { workspaceId: "w-target" } });
+    assert.equal(result.results.length, 2, "every id gets an entry, in the order it was asked for");
+    assert.deepEqual(
+      result.results.map((row) => [row.sessionId, row.ok, row.code]),
+      [
+        ["s1", false, "session-active"],
+        ["s2", true, undefined],
+      ],
+      "the live session is reported, and the idle one still moves",
+    );
+    assert.equal(existsSync(join(live.dir, LOG)), true, "the refused session keeps its log where it was");
+    assert.equal(existsSync(idle.dir), false);
   } finally {
     await box.cleanup();
   }

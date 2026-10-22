@@ -135,18 +135,58 @@ test("trashing skips unknown ids instead of failing the batch", async () => {
   }
 });
 
-test("trashing a running session is refused", async () => {
+test("a running session is refused without cancelling the rest of the batch", async () => {
   const box = await sandbox();
   try {
     const api = fakeApi({
       home: box.home,
       dataDir: box.dataDir,
-      sessions: [{ id: "s1", title: "live", running: true }],
+      sessions: [
+        { id: "s1", title: "live", running: true },
+        { id: "s2", title: "idle" },
+      ],
     });
-    await writeSession(box.home, "proj", "s1");
-    await assert.rejects(() => trashSessions(api, ["s1"]), (error) => error.code === "session-active");
+    const live = await writeSession(box.home, "proj", "s1");
+    const idle = await writeSession(box.home, "proj", "s2");
+
+    const result = await trashSessions(api, ["s1", "s2"]);
+    assert.deepEqual(result.trashed, ["s2"], "the idle session still goes");
+    assert.deepEqual(result.skipped, ["s1"]);
+    assert.deepEqual(
+      result.errors.map((error) => [error.sessionId, error.code]),
+      [["s1", "session-active"]],
+      "the refusal is reported per id instead of throwing away the batch",
+    );
+    assert.equal(existsSync(live), true, "the running session keeps its log");
+    assert.equal(existsSync(idle), false);
     const index = await api.documents.trash.read();
-    assert.deepEqual(Object.keys(index.entries), [], "a refusal leaves no entry behind");
+    assert.deepEqual(Object.keys(index.entries), ["s2"], "a refusal leaves no entry behind");
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("two windows trashing the same session leave one entry and one payload", async () => {
+  const box = await sandbox();
+  try {
+    const api = fakeApi({
+      home: box.home,
+      dataDir: box.dataDir,
+      sessions: [{ id: "s1", title: "once" }],
+    });
+    const dir = await writeSession(box.home, "proj", "s1");
+
+    const [first, second] = await Promise.all([trashSessions(api, ["s1"]), trashSessions(api, ["s1"])]);
+    const winners = [first, second].filter((result) => result.trashed.length === 1);
+    assert.equal(winners.length, 1, "exactly one of the two moves the payload");
+    const loser = [first, second].find((result) => result.trashed.length === 0);
+    assert.deepEqual(loser.skipped, ["s1"], "the loser reports the id as skipped, not as an error");
+
+    const index = await api.documents.trash.read();
+    const entry = index.entries.s1;
+    assert.ok(entry, "the entry the winner wrote survives the loser's compensation");
+    assert.equal(existsSync(join(box.dataDir, "trash", entry.trashId, LOG)), true, "the payload is reachable");
+    assert.equal(existsSync(dir), false);
   } finally {
     await box.cleanup();
   }

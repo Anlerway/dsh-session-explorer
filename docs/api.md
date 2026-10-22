@@ -31,6 +31,10 @@
 | HTTP 头 | `If-Match: "12"`（引号可有可无，空标签 `""` 表示不表态） |
 | body 字段 | `{ "revision": 12, ... }` |
 
+弱标签 `W/"12"` 按 `12` 读——它声明的就是那个版本，只是允许内容被等价改写；`*` 与空标签
+一样表示不表态，回落到 body。给了**不是版本号**的值（`If-Match: abc`、`1, 2`）是 `400
+bad-request`，而不是悄悄当没给——否则一个写错的头会变成"最后写入者赢"。
+
 两者都不给 = 最后写入者赢（单窗口用户的预期）。给了但落后 = `409 revision-conflict`，
 客户端应重新拉取后重试。实现见 `lib/index.js:1057`（读期望值）与 `lib/store/sidecar.js`（比对）。
 
@@ -191,7 +195,7 @@ DSH 自己的归属（`lib/index.js:1021`）。两者都由 host 算好，客户
 | `POST /sessions/:id/unpin` | — | `{ pinnedSessionIds }` |
 | `POST /sessions/:id/fork` | `{ atSeq?: number }` | `{ sessionId, parentSessionId }` |
 | `POST /move` | `{ ids, target: { workspaceId }, copy? }` | `{ results }` |
-| `POST /trash` | `{ ids }` | `{ trashed, skipped }` |
+| `POST /trash` | `{ ids }` | `{ trashed, skipped, errors }` |
 | `POST /restore` | `{ ids }` | `{ restored, skipped, errors }` |
 | `POST /purge` | `{ ids }` | `{ purged, skipped }` |
 | `POST /trash/empty` | — | `{ purged }` |
@@ -210,7 +214,17 @@ DSH 自己的归属（`lib/index.js:1021`）。两者都由 host 算好，客户
 `copy: true` 写第二份独立会话（新 id）而不是移动。有会话在跑时拒绝（`session-active`）——
 DSH 还握着旧路径的写句柄，从底下挪走会损坏尾部。
 
+`move` 是**逐条**的：一条搬不动（`session-active`、目标目录被占、payload 中途消失）不会取消
+其余，`results` 里每条是 `{ sessionId, ok, code?, message?, ... }`。两种例外是整单错误：
+目标 workspace 解析不了时，一条都不动（`bad-request` / `workspace-not-found`）；
+**全部**失败时把第一条错误抛出来，避免回一个全是 `ok: false` 的 200——客户端只看信封的
+`code`，看不了逐条结果。
+
 `POST /trash` 是真移动：会话目录离开 DSH 的 sessions 树，所以 DSH 自己的侧栏里也会消失。
+同样是逐条的：`trashed` 是搬走的，`skipped` 是本来就在回收站或没有日志的，`errors` 是搬失败
+的（`session-active` 等），三者合起来正好是请求的 id 集合。并发删除同一会话时，先在文档锁里
+认领条目（`pending: true`）再搬文件，后到者看见条目已存在就记 `skipped`，不会各写一个 trashId
+再把对方的条目录掉。
 恢复按 `original → workspace → ungrouped` 三级阶梯落地（见 [data-directory.md](data-directory.md)）。
 `POST /restore` 是**逐条**的：某一条恢复不了（目标路径又被占了、payload 中途消失）不会取消整批，
 失败的那条进 `errors: [{ sessionId, code, message }]` 并同时计入 `skipped`，其余照常恢复。

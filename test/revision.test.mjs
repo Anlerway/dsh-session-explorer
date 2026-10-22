@@ -39,8 +39,14 @@ test("no statement of intent means last writer wins, not a rejection", () => {
   assert.equal(expectedRevision({}), undefined);
   assert.equal(expectedRevision({ headers: { "if-match": '""' } }), undefined, "an empty tag states nothing");
   assert.equal(expectedRevision({ headers: { "if-match": '"   "' } }), undefined);
-  assert.equal(expectedRevision({ headers: { "if-match": '"abc"' } }), undefined);
-  assert.equal(expectedRevision({ headers: { "if-match": "W/\"5\"" } }), undefined, "a weak validator is not a revision");
+});
+
+test("a weak validator still states the revision it names", () => {
+  // `W/"5"` says "the version I hold is 5", weakly. Dropping the prefix and
+  // reading 5 is what keeps a proxy that weakens tags from silently turning a
+  // guarded write into a last-writer-wins one.
+  assert.equal(expectedRevision({ headers: { "if-match": 'W/"5"' } }), 5);
+  assert.equal(expectedRevision({ headers: { "if-match": '  w/"12" ' } }), 12);
 });
 
 test("revision 0 is a real revision, not an absent one", () => {
@@ -49,9 +55,15 @@ test("revision 0 is a real revision, not an absent one", () => {
   assert.equal(expectedRevision({ headers: { "if-match": '"0"' } }), 0);
 });
 
-test("an unparseable header falls back to the body instead of wiping the guard", () => {
+test("a header that is not a revision is a 400, not an unguarded write", () => {
+  // Falling back to the body (or to nothing) would turn a broken client into a
+  // client that overwrites whatever it finds.
+  assert.throws(() => expectedRevision({ headers: { "if-match": '"abc"' }, body: { revision: 6 } }), (error) => error.code === "bad-request");
+  // A tag that names a revision and then some other revision is unparseable too.
+  assert.throws(() => expectedRevision({ headers: { "if-match": '"1", "2"' } }), (error) => error.code === "bad-request");
+  // `*` is not a revision but it is a legitimate statement ("it exists"), so it
+  // falls through to the body rather than becoming an error.
   assert.equal(expectedRevision({ headers: { "if-match": "*" }, body: { revision: 6 } }), 6);
-  assert.equal(expectedRevision({ headers: { "if-match": '"abc"' }, body: { revision: 6 } }), 6);
 });
 
 test("a conflict is a 409, so the client can tell it from a bad request", () => {
