@@ -95,6 +95,16 @@ test("normalizeCommand accepts the window's kinds and refuses the rest", () => {
   }
 });
 
+test("open-settings is navigation: allowed from the window and carrying no payload", () => {
+  // 更多设置… in the detached window is a request to the DSH page, so the window
+  // has to be allowed to send it — and it names nothing, so nothing is filtered.
+  assert.deepEqual(normalizeCommand({ kind: "open-settings" }), { kind: "open-settings", payload: {} });
+  assert.deepEqual(normalizeCommand({ kind: "open-settings", payload: { shell: "/bin/sh" } }), {
+    kind: "open-settings",
+    payload: {},
+  });
+});
+
 test("normalizeCommand keeps only the known payload fields, and clips them", () => {
   const long = "x".repeat(500);
   const { payload } = normalizeCommand({

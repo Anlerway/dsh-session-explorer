@@ -191,11 +191,67 @@ A placement naming a node that no longer exists degrades to the session's own wo
 | Slot | What it renders |
 |---|---|
 | `sidebar.footer.action` | The explorer entry and its portal panel |
-| `settings.section` | The settings page: panel size, scrim, browser component, data directory |
+| `settings.section` | The settings page: 打开方式, 列表, 面板尺寸, 遮罩, 浏览器组件, 数据目录 |
+| `settings.onboarding` | One headless step that only captures the shell's `openSection` (see below); it renders nothing and completes itself |
 | `conversation.session.header.actions` | 归档 · 收藏 · 待办 · 在会话资源管理器查看 · 删除, icon + word above DSH's own conversation (icon only below 1100px) |
 | `sidebar.workspaces.session.menu.item` | 在会话资源管理器查看 and 删除, appended to DSH's per-session "…" menu |
 
 Every label is a locale-bound thunk, so switching the app language re-renders them.
+
+### 默认打开方式: 浮窗 or 独立弹窗
+
+The sidebar entry is a launcher, and where it launches to is a setting rather than a
+habit: `shell.open.mode` is `"panel"` (the floating card) or `"detached"` (the OS window),
+and 设置 → 会话资源管理器 → 打开方式 is the only place to change it. 浮窗 is the default
+because a launch that lands nowhere is worse than a modest one — 独立弹窗 needs the browser
+component, so its chip is disabled (with the reason) until that component is installed.
+
+Two consequences are deliberate:
+
+- **The choice is read at launch and re-read every launch.** The footer button mounts
+  outside the panel and never sees the panel's `/bootstrap`, so the launch path asks
+  `GET /settings` — a light answer, no session scan — instead of trusting a cached payload.
+  A change made in the settings window therefore takes effect on the next click, not on the
+  next restart.
+- **An entry press is a launch or a close, never a toggle to somewhere else.** Pressing it
+  while the panel is open closes the panel, whatever the setting says; the setting decides
+  only where a *closed* explorer opens. And if 独立弹窗 fails to open, the launch falls back
+  to 浮窗 with the reason in the panel's status line — one press, one surface, no silence.
+- **Every way in obeys the same setting.** DSH's conversation header (在会话资源管理器查看)
+  and the session row menu are the other entries, and they follow `shell.open.mode` the same
+  way the sidebar button does. They are *destinations*, though, not just launches, so the
+  order differs: a panel that is already on screen reveals the session in place (that is the
+  surface the user is looking at, and a second one would be noise), otherwise 独立弹窗 gets
+  the window — the reveal command is published *before* the window is asked for, so a window
+  already open navigates at once and one that is still starting reads it back from the bus
+  buffer — and if the window cannot open, the panel opens and lands on the session.
+
+### 更多设置… and DSH's settings window
+
+The panel's "…" menu has a 更多设置… entry that opens DSH's own settings window on this
+plugin's section. The settings shell owns that modal and publishes slots for its *contents*
+only — no service exposes `openSettings` — so the opener tries three doors and reports
+whether one actually landed:
+
+1. `settings.onboarding` props carry `openSection(id)`, the shell's own navigation action.
+   It is the only door that opens the modal *already on our section*, but the shell mounts
+   that roster only while the onboarding flow is showing (a blank session) or while a step is
+   asked for by id. Relying on it alone is what made this entry stop working: on an ordinary
+   session it never arrives.
+2. The product command `settings.open` — the same command the sidebar Settings button and
+   the Settings shortcut run. `ctx.shortcuts` publishes no `invoke`, but the registry it
+   owns does, and invoking it is exactly what a native menu selection does: no keypress is
+   faked and no DSH button is clicked. It is offered the same context a menu passes
+   (`target` / `region` / `modal`), so a dialog in front blocks it here exactly as it would
+   block the menu — and an already-open settings window is never toggled shut.
+3. The modal's nav rail is a list of buttons carrying each section's label, so once (2) has
+   opened the window wherever it was last left, the opener clicks the cell whose label is
+   ours. The store's active-section id is unreachable from outside, so this step is
+   best-effort by design.
+
+Every step is verified against the DOM (`[data-shortcut-modal="settings"]`) before the panel
+closes: a host that refuses leaves the panel, and a hint, on screen rather than an empty
+desktop.
 
 ### DSH's own session surfaces
 
@@ -311,6 +367,8 @@ replaying yesterday's "open session" after a restart would move the view unasked
 |---|---|---|
 | window → panel | `open-session` | 打开 in the window now really opens the session in DSH: the window publishes, the panel opens itself and calls `uiWorkspace.openSession` |
 | window → panel | `new-session` | 新建会话 in the window starts a draft in the current workspace |
+| window → panel | `open-settings` | 更多设置… works from the window too: the window has no settings shell of its own, so the press travels here and the DSH page opens the window. The window's own copy of the command is its request echoing and is ignored |
+| page → window | `reveal` | 在会话资源管理器查看 with 默认打开方式 = 独立弹窗: the DSH page cannot navigate a panel that is not on screen, so it publishes the session id and the window lands on it. The page ignores this kind — it is the publisher |
 | Host → panel | `window-open` / `window-closed` | The panel knows whether 独立窗口 is on screen without polling |
 
 The panel keeps the id-copy fallback: with no panel listening (it is closed, or an older
@@ -429,6 +487,25 @@ same bundle against a stub React whose `useState` survives a re-render, clicks t
 container row and asserts the editor opens. A list row owns its editor locally and only *reports*
 the new name to the panel, so a pencil click cannot be made to look broken by a stale payload or
 a gate that disagrees — the two halves are tested separately on purpose.
+
+`test/client-launch.test.mjs` covers the two entry points against stub host surfaces: that
+浮窗 opens the panel and asks for no window, that 独立弹窗 posts `/detached/open` and leaves the
+panel closed, that a `component-not-installed` refusal falls back to 浮窗 *with* the reason,
+that the mode is re-read on every launch rather than cached forever, and that 更多设置… invokes
+`settings.open` exactly once with the context a native menu passes before clicking our nav
+cell — and not at all when the settings window is already open, because that command toggles.
+The same file drives 在会话资源管理器查看 from both sides: 浮窗 lands in the panel, 独立弹窗
+publishes the reveal and *then* opens the window, a refusal still lands in the panel, a panel
+already on screen is revealed in place without even reading the setting, and a stub
+`EventSource` shows the window following a reveal it did not send while the page ignores the
+one it did.
+
+`test/settings-page.test.mjs` renders the settings page itself against a React whose state
+survives a re-render, because the page holds its document in state that arrives after the
+first paint. It pins the 打开方式 group as the first one on the page, 浮窗 as the selected
+chip, the 独立弹窗 chip as disabled (and explained) without the browser component, and the
+write a chip click makes: exactly `{shell:{open:{mode}}}`, citing the revision it read, so a
+launch setting can never rewrite the panel's size or scrim on the way past.
 
 `test/session-state.test.mjs` pins the state DSH's own surfaces read: which document each flag
 comes from, that only a real boolean counts, and the two ways a session can read as trashed (the

@@ -14,6 +14,7 @@ import {
   MODAL_FIXED_SIZES,
   MODAL_PERCENT_SIZES,
   MODAL_SIZING,
+  OPEN_MODES,
   defaultSettings,
   mergeSettings,
   modalSizeOf,
@@ -34,9 +35,10 @@ test("defaults keep the panel plain: 浮窗, fixed medium, no scrim", () => {
   // The plugin stores no runtime preference: the browser component is not
   // shared with, or adopted from, any other plugin.
   assert.equal("component" in settings, false);
-  // 独立窗口 is opened from the titlebar, not from a setting, so the document
-  // carries no presentation mode at all.
-  assert.equal("openMode" in settings.shell, false);
+  // 默认打开方式 defaults to 浮窗: the detached window needs the browser
+  // component, and a launch that lands nowhere is worse than a modest one.
+  assert.equal(settings.shell.open.mode, "panel");
+  assert.deepEqual([...OPEN_MODES], ["panel", "detached"]);
   // The retired "native modal" axis is gone too: it lived on shell.modal.
   assert.equal("presentation" in settings.shell.modal, false);
   assert.equal(settings.dataDir.current, null);
@@ -49,13 +51,25 @@ test("normalizeSettings always returns a complete document", () => {
   assert.deepEqual(normalizeSettings("nonsense"), defaultSettings());
 });
 
-test("a retired open mode is dropped instead of being echoed back", () => {
-  // 独立窗口 used to be a setting. It is not any more: the panel is always the
-  // floating card, and a detached window is opened from the titlebar. A stored
-  // mode from an earlier build must not survive normalisation.
-  for (const legacy of ["modal", "detached", "detached-window", "window", "float", "nonsense"]) {
-    assert.equal("openMode" in normalizeSettings({ shell: { openMode: legacy } }).shell, false);
+test("默认打开方式 is a closed vocabulary of two launch modes", () => {
+  // Both real modes survive.
+  for (const mode of OPEN_MODES) {
+    assert.equal(normalizeSettings({ shell: { open: { mode } } }).shell.open.mode, mode);
   }
+  // Anything else — including a hand-edited file, and the retired shell.openMode
+  // that used to hold the same vocabulary one level up — lands on 浮窗 instead
+  // of reaching the launch path as an unknown string.
+  for (const legacy of ["window", "detached-window", "float", "auto", "nonsense", 42]) {
+    assert.equal(normalizeSettings({ shell: { open: { mode: legacy } } }).shell.open.mode, "panel");
+  }
+  assert.equal(normalizeSettings({ shell: { openMode: "detached" } }).shell.open.mode, "panel");
+});
+
+test("a launch-mode patch merges without disturbing the modal group", () => {
+  const merged = mergeSettings(defaultSettings(), { shell: { open: { mode: "detached" } } });
+  assert.equal(merged.shell.open.mode, "detached");
+  assert.equal(merged.shell.modal.sizing, "fixed");
+  assert.equal(merged.shell.modal.size, "md");
 });
 
 test("sizing modes and presets are closed vocabularies", () => {

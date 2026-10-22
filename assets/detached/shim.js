@@ -236,6 +236,17 @@
     // itself after a move.
     sessions: { refresh: async () => {} },
     workspaces: { refresh: async () => {} },
+    /**
+     * The one service that is named after *this file* rather than after DSH:
+     * a request back to the plugin's own code in the DSH page, for the things
+     * only that page can do. Its presence is also how client.js tells that it
+     * is running in the window instead of inside DSH.
+     */
+    hostBridge: {
+      request(kind, payload) {
+        return publish(String(kind), payload);
+      },
+    },
   };
 
   /** The ctx client.js is handed. Only the members it actually uses exist. */

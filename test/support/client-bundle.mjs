@@ -57,12 +57,15 @@ export function recordingFetch(respond = () => ({ ok: true, result: {} })) {
 }
 
 /**
- * @param {{ fetch?: any, expose?: string[] }} [options]
+ * @param {{ fetch?: any, expose?: string[], document?: any, react?: any }} [options]
+ *   `document` and `react` let a test supply a surface the default stubs cannot
+ *   describe — a settings modal that opens, a component tree that re-renders.
  * @returns {{ bundle: any, test: Record<string, any>, fetch: any }}
  */
 export function loadClientBundle(options = {}) {
   const fetchImpl = options.fetch ?? recordingFetch();
   const expose = options.expose ?? [];
+  const react = options.react ?? React;
   const storage = new Map();
 
   globalThis.window = {
@@ -77,7 +80,7 @@ export function loadClientBundle(options = {}) {
     innerHeight: 800,
     matchMedia: () => ({ matches: false, addEventListener: () => {} }),
   };
-  globalThis.document = {
+  globalThis.document = options.document ?? {
     querySelector: () => null,
     createElement: () => ({ setAttribute: () => {}, appendChild: () => {}, style: {} }),
     head: { appendChild: () => {} },
@@ -88,7 +91,7 @@ export function loadClientBundle(options = {}) {
 
   let bundle = null;
   const requireShim = (name) => {
-    if (name === "react") return React;
+    if (name === "react") return react;
     throw new Error("unexpected require: " + name);
   };
 
