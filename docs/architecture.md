@@ -50,7 +50,8 @@ package.json
    `ctx / dataDir / paths / documents / migration / reopen / component / detached / bridge /
    theme / capabilities / reader`。`dataDir` 与 `paths` 是 getter，迁移后自动指向新值。
 5. **启动自愈**（`:232-246`）：`reconcileTrash(api)` 收尾"索引已写、payload 未搬"的中断；
-   `component.sweep()` 删除上一次卸载时被占用、删不掉的目录。两者都 best-effort、不 await。
+   `reconcileMoves(api)` 做同一件事的移动版（payload 已搬到目标、注册表还没跟上）；
+   `component.sweep()` 删除上一次卸载时被占用、删不掉的目录。三者都 best-effort、不 await。
 6. **注册前缀路由**（`:248-256`），并把返回的 dispose 挂到 `ctx.effect`。
 7. **退出时收尾**（`:261-267`）：插件被禁用/重载时 `api.detached.stop()`，否则 helper 进程会
    活过拥有它的代码。
@@ -200,9 +201,11 @@ GET /bootstrap  →  一次往返把面板需要的全部东西给客户端
 4. **绝不背着 kernel 写 DSH 的存储**。标题、归档、置顶、派生都调 DSH 自己的服务
    （`lib/host/actions.js`）。两个受控例外：`host/move.js` 移动会话文件并重写 header 的 `cwd`
    （必须同时走 registry 的写路径，否则下次启动会话就丢了），`host/trash.js` 把会话目录整体
-   移进/移出回收站（DSH 与插件对"它不在了"的理解因此天然一致）。
+   移进/移出回收站（DSH 与插件对"它不在了"的理解因此天然一致）。两个例外都用"先记账、后动手"
+   兜住崩溃：回收站写 `pending` 条目，移动写 `move-journal.v1.json`，启动时各自对账。
 5. **侧车可删**。`tree.v1.json` / `annotations.v1.json` / `settings.v1.json` /
    `trash/index.v1.json` 只存 DSH 不知道的东西；删掉它们不会丢会话。
+   `move-journal.v1.json` 是例外：它记录的是**正在进行**的一次移动，正常情况下是空文件（不存在）。
 6. **服务探测全部防御式**。缺服务只降级一个功能（`/bootstrap` 的 `capabilities` 会告诉客户端
    哪些不可用），不能让整个插件挂掉。
 7. **副作用都要挂 `ctx.effect`**，否则热重载会漏掉清理（路由 dispose、主题 observer、桥订阅、

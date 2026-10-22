@@ -46,7 +46,10 @@ test("turnsOf keeps only the two chat message types, in order", () => {
 
 test("blocksOf tolerates a plain string and unknown block types", () => {
   assert.deepEqual(blocksOf("hello"), { text: "hello", reasoning: "", tools: [] });
-  assert.deepEqual(blocksOf([{ type: "mystery", text: "x" }]), { text: "", reasoning: "", tools: [] });
+  // An unknown type that carries words keeps them: dropping the block dropped
+  // the whole message when it was the only one in the turn.
+  assert.deepEqual(blocksOf([{ type: "mystery", text: "x" }]), { text: "x", reasoning: "", tools: [] });
+  assert.deepEqual(blocksOf([{ type: "image", source: {} }]), { text: "![图片]", reasoning: "", tools: [] });
   assert.deepEqual(blocksOf(null), { text: "", reasoning: "", tools: [] });
 });
 
@@ -122,4 +125,30 @@ test("exportFileName strips characters a filesystem refuses", () => {
   assert.equal(exportFileName({ id: "x" }, 'a/b:c*?"<>|d', "md"), "a-b-c-d.md");
   assert.equal(exportFileName({ id: "x" }, "", "jsonl"), "x.jsonl");
   assert.equal(exportFileName({ id: "x" }, "  spaced  name  ", "md"), "spaced name.md");
+});
+
+test("a title is truncated by code point, not by UTF-16 unit", () => {
+  // 79 characters then an emoji: a naive `.slice(0, 80)` keeps half the pair and
+  // the download route's encodeURIComponent then throws.
+  const title = "a".repeat(79) + "🎉" + "b".repeat(10);
+  const name = exportFileName({ id: "x" }, title, "md");
+  assert.equal(Array.from(name.replace(/\.md$/, "")).length, 80, "80 code points survive");
+  assert.equal(name, "a".repeat(79) + "🎉.md", "the emoji is whole");
+});
+
+test("a mask range with one end hides what it names", () => {
+  const events = [
+    { seq: 1, type: "user/message", data: { content: "one" } },
+    { seq: 2, type: "user/message", data: { content: "two" }, surfaceOp: { kind: "replace", ranges: [{ from: 2 }] } },
+  ];
+  assert.deepEqual([...maskedSeqs(events)], [2], "a start-only range hides its own seq");
+});
+
+test("an absurd mask range does not run away", () => {
+  const events = [
+    { seq: 1, surfaceOp: { kind: "replace", ranges: [{ from: 1, to: 1_000_000_000 }] } },
+  ];
+  const hidden = maskedSeqs(events);
+  assert.equal(hidden.size, 100_000, "the range is capped, not iterated a billion times");
+  assert.ok(hidden.has(1));
 });

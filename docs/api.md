@@ -160,6 +160,11 @@ DSH 自己的归属（`lib/index.js:1021`）。两者都由 host 算好，客户
 
 `PATCH` 的 `annotation` 在该条目已被清空时是 `null`——注解不存"空壳"，一旦没有任何信息就整条删除。
 
+`:id` 必须是合法会话 id（`isAnnotationId`：非空、≤ 上限、不在 `__proto__` / `constructor` /
+`prototype` 里、只含 `[A-Za-z0-9._:-]`），否则 `400 session id is not a valid id`。注解文档用会话 id
+当键，`__proto__` 会写原型而不是条目——补丁静默消失、接口却回报成功，所以这一层在路由和
+`patchAnnotation` 里各挡一次。
+
 `GET /session-state/:id` 是给 DSH 自己的会话标题栏和行菜单用的：它们没有 bootstrap 快照，
 只想知道三个布尔。`trashed` 有两个来源（本插件的回收站索引，或 DSH 报告的 `trashed`），
 任一为真即"不在"（`lib/domain/session-state.js:32`）。
@@ -199,7 +204,7 @@ DSH 自己的归属（`lib/index.js:1021`）。两者都由 host 算好，客户
 | `POST /restore` | `{ ids }` | `{ restored, skipped, errors }` |
 | `POST /purge` | `{ ids }` | `{ purged, skipped }` |
 | `POST /trash/empty` | — | `{ purged }` |
-| `GET /export` | `?sessionId&format=md\|jsonl&download=1` | 文件本体 |
+| `GET /export` | `?sessionId&format=md\|jsonl&download=1&range=<from>-<to>` | 文件本体 |
 
 前六个都是**DSH 自己的概念**，走 DSH 的服务（`lib/host/actions.js`），插件不落盘：
 
@@ -234,6 +239,16 @@ DSH 还握着旧路径的写句柄，从底下挪走会损坏尾部。
 最后一个不完整的帧或半行被丢掉，前面的完整事件照常导出。读来重写的路径（move/trash）不能
 容忍——它必须保留每一个字节的去向。
 
+文件名按**码点**截断到 80（`Array.from(...).slice(0, 80)`），不是 `slice(0, 80)`：后者按 UTF-16
+切，标题末尾是 emoji 时会切出孤立代理项，`encodeURIComponent` 随即抛 `URIError`，一次导出变成 500。
+
+`GET /export?range=` 的掩码（导出时隐藏某段对话）要求 `from`/`to` 都是有限非负整数：只给 `from`
+时按"到结尾"处理（`to = Infinity` 由实现截到末条），`to` 也有上界，不会出现"日志里写了
+`to: 1000000000` 就把请求线程循环十亿次"的输入。
+
+渲染时不认识的 block 类型不会让整条消息消失：它被写成一个可读的占位块，所以一条只含图片或
+只含工具结果的助手消息仍然出现在 md 与 jsonl 里。
+
 ### 4.6 workspace
 
 | 路由 | body | 返回 |
@@ -245,6 +260,11 @@ DSH 还握着旧路径的写句柄，从底下挪走会损坏尾部。
 
 删除 workspace 只删登记：目录和所有会话日志都在，会话回落到未分组（与 DSH 原生删除语义一致）。
 `reveal` 在资源管理器里定位目录；workspace 没有记录路径时 `bad-request`。
+
+`POST /reveal-path` 只接受**本插件已经列出的目录**：某个会话的 `cwd`，或某个 workspace 自己的
+`path`（`lib/index.js` 的 `knownDirectory`）。其他路径一律 `400 path is not a directory this plugin
+knows about`——客户端只会送它正在显示的会话的 cwd，所以这条路由不该是一个"打开任意路径"的通用原语
+（`\\host\share` 交给资源管理器是凭据泄露面，不是便利）。子目录不算：比对的是完整路径，不是前缀。
 
 ### 4.7 数据目录
 

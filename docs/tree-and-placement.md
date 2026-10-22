@@ -127,6 +127,21 @@ DSH 置顶的是**会话**；这里还有容器置顶（文件夹、workspace）
 固定节点不可移动；客户端会先把非法目标变灰，但 host 一定会**再校验一次**——一个过期的客户端
 不应该能写出非法的树。
 
+### 7.1 写进 draft 之前的第二次校验
+
+`canMove()` 看的是请求到达时读到的树。两个移动**同时**到达时，它们看到的是同一棵"之前"的树：
+A 进 B 通过，B 进 A 也通过，写下去就是一个环（渲染时整支降级到根）。所以 `moveNode()`
+（`lib/domain/folders.js`）在 mutate 回调里再问一次 `isInsideDraft(draft, nodeId, parentId)`，
+看到的是"第二次移动即将扩展的那份 draft"，于是第二次被拒（`cannot move … inside itself`）。
+`sidecar.mutate` 的串行锁让这次检查是原子的。
+
+### 7.2 名字与顺序
+
+同一父节点下不允许重名（`assertUniqueName`，比较前 `trim` + 小写；不同父节点可以同名），
+新建、重命名、移动三条路径都会查。`order` 也不再取 `siblings.length`——删掉中间一个之后，
+`length` 会把最后一个兄弟的编号再发一次，两行同号，用户排好的次序变成平局。
+现在取"当前最大 `order` + 1"（`nextOrder`），编号单调。
+
 ## 8. 相关文件
 
 | 文件 | 职责 |

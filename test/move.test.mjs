@@ -31,7 +31,8 @@ import {
   inheritedCutOf,
   isContiguousLog,
 } from "../lib/sources/artifact.js";
-import { moveSessions } from "../lib/host/move.js";
+import { moveSessions, reconcileMoves } from "../lib/host/move.js";
+import { recordMove, journalPath } from "../lib/host/move-journal.js";
 
 const LOG = "session.v4.jsonl.zstd";
 
@@ -287,11 +288,33 @@ test("moving into the workspace that already owns the session is a no-op", async
       { id: "w-source", title: "source", path: "C:\\work\\source", sessionIds: ["s1"] },
     ]);
     const api = apiWith(box.home, registry);
-    const { dir } = await writeSession(box.home, "proj", "s1");
+    // The payload has to be where the registry says it is for the no-op to be a
+    // no-op: a session the registry calls "home" while its log sits in another
+    // project directory is exactly the state L5 refused to report as success.
+    const project = projectKey("C:\\work\\source");
+    const { dir } = await writeSession(box.home, project, "s1", { cwd: "C:\\work\\source" });
 
     const result = await moveSessions(api, { ids: ["s1"], target: { workspaceId: "w-source" } });
     assert.equal(result.results[0].moved, false);
     assert.equal(existsSync(join(dir, LOG)), true);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("a session the registry calls home but the payload is not in is put where it belongs", async () => {
+  const box = await sandbox();
+  try {
+    const workspacePath = join(box.root, "source");
+    await mkdir(workspacePath, { recursive: true });
+    const registry = fakeRegistry([{ id: "w-source", title: "source", path: workspacePath, sessionIds: ["s1"] }]);
+    const api = apiWith(box.home, registry);
+    const { dir } = await writeSession(box.home, "proj", "s1", { cwd: workspacePath });
+
+    const result = await moveSessions(api, { ids: ["s1"], target: { workspaceId: "w-source" } });
+    assert.equal(result.results[0].moved, true);
+    assert.equal(existsSync(join(dir, LOG)), false);
+    assert.equal(existsSync(join(box.home, "sessions", projectKey(workspacePath), "s1", LOG)), true);
   } finally {
     await box.cleanup();
   }
@@ -389,6 +412,70 @@ test("an unknown target workspace is refused before anything moves", async () =>
 });
 
 // ── copy ────────────────────────────────────────────────────────────────────
+
+// ── intent journal ──────────────────────────────────────────────────────────
+
+test("a move interrupted after the payload arrived is finished at the next start", async () => {
+  const box = await sandbox();
+  try {
+    const workspacePath = join(box.root, "target");
+    await mkdir(workspacePath, { recursive: true });
+    const registry = fakeRegistry([{ id: "w-target", title: "target", path: workspacePath, sessionIds: [] }]);
+    const api = apiWith(box.home, registry);
+    api.paths = { dataDir: join(box.root, "data") };
+    await mkdir(api.paths.dataDir, { recursive: true });
+
+    // The state a crash leaves behind: the payload is at the destination, the
+    // registry has not heard about it, and the journal still names the move.
+    const project = projectKey(workspacePath);
+    const { dir } = await writeSession(box.home, project, "s1", { cwd: workspacePath });
+    await recordMove(api.paths, {
+      sessionId: "s1",
+      from: join(box.home, "sessions", "elsewhere"),
+      to: dir,
+      logName: LOG,
+      workspaceId: "w-target",
+      header: { id: "s1", cwd: workspacePath },
+      startedAt: Date.now(),
+    });
+
+    const result = await reconcileMoves(api);
+    assert.deepEqual(result.finished, ["s1"]);
+    assert.deepEqual(result.dropped, []);
+    assert.deepEqual(registry.entities[0].record.sessionIds, ["s1"]);
+    assert.equal(registry.headers.get("s1").cwd, workspacePath);
+    assert.equal(existsSync(journalPath(api.paths)), false);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("a journal entry whose payload never left is dropped, not repaired", async () => {
+  const box = await sandbox();
+  try {
+    const registry = fakeRegistry([{ id: "w-target", title: "target", path: join(box.root, "t"), sessionIds: [] }]);
+    const api = apiWith(box.home, registry);
+    api.paths = { dataDir: join(box.root, "data") };
+    await mkdir(api.paths.dataDir, { recursive: true });
+    await recordMove(api.paths, {
+      sessionId: "s1",
+      from: join(box.home, "sessions", "proj", "s1"),
+      to: join(box.home, "sessions", "other", "s1"),
+      logName: LOG,
+      workspaceId: "w-target",
+      header: { id: "s1", cwd: "C:\\work\\source" },
+      startedAt: Date.now(),
+    });
+
+    const result = await reconcileMoves(api);
+    assert.deepEqual(result.finished, []);
+    assert.deepEqual(result.dropped, ["s1"]);
+    assert.deepEqual(registry.entities[0].record.sessionIds, []);
+    assert.equal(existsSync(journalPath(api.paths)), false);
+  } finally {
+    await box.cleanup();
+  }
+});
 
 test("copying writes a second session with a fresh id and the same events", async () => {
   const box = await sandbox();

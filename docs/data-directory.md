@@ -19,6 +19,7 @@ C:\Users\<user>\.dsh-session-explorer   ← 本插件的
 ├── tree.v1.json          文件夹、放置、workspace 顺序、快捷方式、置顶
 ├── annotations.v1.json   标签、备注、收藏/待办标记、共享标签库
 ├── settings.v1.json      跨浏览器的偏好（布局在 localStorage）
+├── move-journal.v1.json  正在进行的跨工作区移动（见 §6.2）
 ├── .location             迁移后留下的指针（只有 copy 模式会留）
 ├── .tmp/                 原子写的临时文件，启动时只清 `*.tmp`
 ├── quarantine/           读不出来的文档原件（`<name>.corrupt-<ts>.json`）
@@ -159,6 +160,8 @@ payload 已经到位 → 升级为 ready；payload 从未离开 → 删掉这条
 
 ## 6. 迁移
 
+### 6.1 数据目录迁移
+
 `POST /datadir/migrate`（`lib/host/datadir.js:189`）按顺序做七件事，每一步都推进 `steps` 数组：
 
 | # | 步骤 | 说明 |
@@ -185,7 +188,26 @@ payload 已经到位 → 升级为 ready；payload 从未离开 → 删掉这条
 - 目标目录存在且**非空**。迁移是往目标里复制、失败时按 `carry` 写过的条目回滚，所以目标必须从空开始；
   否则要么两套数据混在一起，要么回滚时误删用户的文件。
 
-## 7. 相关文件
+## 7. 跨工作区移动的意图日志
+
+一次移动是两次写：先把 payload 挪到目标 project 目录，再让 workspace 注册表知道这件事
+（`lib/host/move.js` 文件头）。中间崩溃会留下"字节在目标、注册表还指着旧家"的状态——会话
+在两边都看不到，正是回收站用 `pending` + `reconcileTrash` 挡掉的那种情况。
+
+`move-journal.v1.json`（`lib/host/move-journal.js`）是移动版的同一道保险：
+
+```json
+{ "version": 1, "moves": [{ "sessionId": "…", "from": "…", "to": "…", "logName": "…",
+                            "workspaceId": "…", "header": { "id": "…", "cwd": "…" },
+                            "startedAt": 1760000000000 }] }
+```
+
+- payload 离开原目录**之前**写进一条，注册表跟上之后删掉；写文件是 `temp + rename`，崩溃只会留下旧日志或新日志。
+- 启动时 `reconcileMoves()`（`lib/host/move.js`，`lib/index.js` 里紧挨 `reconcileTrash` 调用）读剩下的条目：
+  目标目录在 → 补上索引与归属（把 `moveOne` 的后半段幂等重放一遍）；目标目录不在 → payload 没走，直接丢弃条目。
+- 修复抛错时条目**留在**日志里而不是被删：下次启动重试，而这条记录是"会话正处于两个家之间"的唯一证据。
+
+## 8. 相关文件
 
 | 文件 | 职责 |
 |---|---|
@@ -195,3 +217,5 @@ payload 已经到位 → 升级为 ready；payload 从未离开 → 删掉这条
 | `lib/domain/settings.js` | 设置形状的唯一出处、`mergeSettings`、`normalizeSettings` |
 | `lib/host/datadir.js` | `describeDataDir` / `inspectDataDir` / `migrateDataDir` |
 | `lib/host/trash.js` | 移动字节、维持索引、对账、恢复阶梯 |
+| `lib/host/move.js` | 跨工作区移动/复制、回滚、`reconcileMoves` |
+| `lib/host/move-journal.js` | 移动意图日志的读写（`recordMove` / `forgetMove` / `pendingMoves`） |

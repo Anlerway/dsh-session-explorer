@@ -295,6 +295,40 @@ test("renameFolder refuses fixed nodes and empty names", () => {
   assert.throws(() => renameFolder(draft, "d-missing", "x"), /unknown folder/);
 });
 
+test("moveNode refuses a cycle even when the caller's tree is stale", () => {
+  const draft = {
+    folders: {
+      "d-a": { id: "d-a", name: "A", parent: FIXED_NODES.root, order: 0 },
+      "d-b": { id: "d-b", name: "B", parent: "d-a", order: 0 },
+    },
+    placement: {},
+    workspaceOrder: {},
+  };
+  // Two moves that arrive together are both checked against the tree as it was
+  // before either landed: A into B passes, then B into A passes too, and the
+  // stored result is a cycle. The check inside the mutation sees the draft the
+  // second move is about to extend, which is what refuses it.
+  assert.throws(() => moveNode(draft, "d-a", "d-b"), /inside itself/);
+  assert.throws(() => moveNode(draft, "d-a", "d-a"), /inside itself/);
+  assert.equal(draft.folders["d-a"].parent, FIXED_NODES.root);
+});
+
+test("a folder name is unique among its siblings and order keeps counting up", () => {
+  const draft = { folders: {}, placement: {}, workspaceOrder: {} };
+  const tree = treeWith();
+  createFolder(draft, { name: "工作" }, tree, () => "1");
+  assert.throws(() => createFolder(draft, { name: " 工作 " }, tree, () => "2"), /already exists/);
+  // A different parent may reuse the name: the rule is about one container.
+  createFolder(draft, { name: "工作", parent: "w-wa" }, tree, () => "3");
+  // Deleting a middle sibling must not hand its number to the next folder, or
+  // two rows end up with the same order and their arrangement becomes a tie.
+  const a = createFolder(draft, { name: "A" }, tree, () => "4");
+  draft.folders[a].order = 5;
+  const c = createFolder(draft, { name: "C" }, tree, () => "5");
+  assert.equal(draft.folders[c].order, 6);
+  assert.throws(() => renameFolder(draft, c, "A"), /already exists/);
+});
+
 test("moveNode places a workspace in a folder and lifts it back to the root", () => {
   const draft = { folders: { "d-a": { id: "d-a", name: "A", parent: FIXED_NODES.root } }, placement: {}, workspaceOrder: {} };
   moveNode(draft, "w-wa", "d-a");
