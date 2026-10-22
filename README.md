@@ -117,6 +117,7 @@ Everything answers with one of two envelopes:
 | `GET /bootstrap` | Everything the panel needs in one round trip: workspaces, sessions, trashed, tree, tags, tag library, settings, revisions, stats |
 | `GET /tags`, `POST /tags`, `DELETE /tags/:tag` | The shared tag library |
 | `PATCH /annotations/:id` | Tags, note, favorite, todo for one session |
+| `GET /session-state/:id` | One session's favorite/todo/archived/trashed, for the buttons DSH renders outside the panel |
 | `POST /folders`, `PATCH /folders/:id`, `DELETE /folders/:id` | Virtual folders (`?lift=0` deletes the contents too) |
 | `POST /nodes/:id/move` | Reparent a folder/workspace node |
 | `POST /nodes/:id/pin` | 置顶 a folder or a workspace (DSH pins sessions; this pins containers, and both land in one band) |
@@ -191,8 +192,52 @@ A placement naming a node that no longer exists degrades to the session's own wo
 |---|---|
 | `sidebar.footer.action` | The explorer entry and its portal panel |
 | `settings.section` | The settings page: panel size, scrim, browser component, data directory |
+| `conversation.session.header.actions` | 归档 · 收藏 · 待办 · 在会话资源管理器查看 · 删除, icon + word above DSH's own conversation (icon only below 1100px) |
+| `sidebar.workspaces.session.menu.item` | 在会话资源管理器查看 and 删除, appended to DSH's per-session "…" menu |
 
-Both labels are locale-bound thunks, so switching the app language re-renders them.
+Every label is a locale-bound thunk, so switching the app language re-renders them.
+
+### DSH's own session surfaces
+
+The panel is one place to manage sessions; DSH's sidebar and conversation header are
+another. Rather than making the user open the panel to 收藏 a session they are reading,
+the same five writes are offered where DSH already shows that session — the header strip
+(all five) and the row menu (查看 + 删除).
+
+These surfaces mount outside the panel and therefore have no `/bootstrap` snapshot: they
+receive one session id, read `GET /session-state/:id` for the three flags, and re-read it
+after every write. That is what keeps a refused toggle honest — the button shows the state
+the host reports, not the state the click assumed. Two rules follow from it:
+
+- **删除 is the panel's soft delete.** The log moves to this plugin's own bin (`POST /trash`),
+  so DSH's list drops the row and 回收站 can restore it. A hard delete from the shell would
+  leave nothing for 回收站 to put back.
+- **One write at a time.** The annotations document is revision-guarded, so the strip
+  disables itself while a write is in flight rather than racing two revisions.
+- **删除 asks before it deletes.** One click on the red 删除 opens the plugin's confirm
+  dialog (取消 / solid red 删除, worded by `hdrDeleteTitle` + `hdrDeleteMessage`); only an
+  answered "yes" reaches `POST /trash`. The row menu's 删除 is red and asks the same
+  question, and it closes the menu first — which is why the question is drawn by a
+  channel mounted beside the sidebar entry rather than by the row that asked it:
+
+  | Host | Where it mounts | Why |
+  |---|---|---|
+  | `DialogChannel` (`dialogStore`) | beside the sidebar entry, always | a question asked from a menu must outlive the menu; one host means two dialogs can never stack |
+  | `useDialogs()` (`confirm` / `ask`) | the panel | the same channel, seen from inside the panel; the panel no longer renders the host |
+
+  Every dialog in the plugin — 清空回收站, 永久删除, the row menu's 删除 — resolves through
+  that one store, so the panel's own keyboard shortcuts stand down (`dialogs.open`) no
+  matter which surface asked.
+
+The strip draws its own icons (one 16×16 inline SVG per action, stroked with `currentColor`
+so the red 删除 paints its own glyph) because a client slot may not require a Harness
+package. It also survives a narrow window: below 1100px the words stay in the tooltip and
+only the icons remain.
+
+在会话资源管理器查看 opens the panel (or the detached window's panel) and navigates to the
+session's home container — the workspace folder it lives in, `所有会话` when it has no home,
+`回收站` when it is trashed — then selects it. A session whose home is not where the user
+expected still lands where the row actually is.
 
 ## The browser component (独立窗口)
 
@@ -356,7 +401,7 @@ only paints when the user raises `settings.shell.modal.dim` above zero.
 
 ```bash
 npm test              # node --test: tree, store, settings, data-directory, trash, sessions,
-                      # move, component, shortcuts, export, theme, detached window
+                      # move, component, shortcuts, export, theme, detached window, session state
 npm run test:render   # the floating panel, rendered against a stub React
 ```
 
@@ -384,6 +429,11 @@ same bundle against a stub React whose `useState` survives a re-render, clicks t
 container row and asserts the editor opens. A list row owns its editor locally and only *reports*
 the new name to the panel, so a pencil click cannot be made to look broken by a stale payload or
 a gate that disagrees — the two halves are tested separately on purpose.
+
+`test/session-state.test.mjs` pins the state DSH's own surfaces read: which document each flag
+comes from, that only a real boolean counts, and the two ways a session can read as trashed (the
+bin holds the payload; the reader reports it while a restore settles). The header strip's wording
+and its disabled rule are pinned in `test/render-smoke.mjs`, where the slot is also registered.
 
 ## License
 

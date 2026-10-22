@@ -69,7 +69,13 @@ globalThis.document = {
   createTextNode: () => ({}),
 };
 const navigatorShim = { clipboard: { writeText: async () => {} } };
-globalThis.fetch = async () => ({ json: async () => ({ ok: true, result: {} }), status: 200 });
+// Every request the module makes is recorded, so a test can prove that a
+// question asks nothing of the host until it is answered.
+const fetchCalls = [];
+globalThis.fetch = async (url, init) => {
+  fetchCalls.push({ url: String(url), method: init?.method ?? "GET" });
+  return { json: async () => ({ ok: true, result: {} }), status: 200 };
+};
 
 let mod = null;
 const requireShim = (name) => {
@@ -89,7 +95,7 @@ const source = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8"
   .replace(
     "    exports.apply = apply;",
     [
-      "    exports.__test = { Trow, SessionRow, ContainerRow, TreePane, ListPane, DetailPane, FilterDialog, CommandMenu, DialogHost, frameSizeOf, PanelBoundary, iconOfNode, nodeLabel };",
+      "    exports.__test = { Trow, SessionRow, ContainerRow, TreePane, ListPane, DetailPane, FilterDialog, CommandMenu, DialogHost, frameSizeOf, PanelBoundary, iconOfNode, nodeLabel, headerActionsFor, hdrIcon, dialogStore, askConfirm, DialogChannel, DialogHost, SessionHeaderActions, SessionMenuItems };",
       "    exports.apply = apply;",
     ].join("\n"),
   );
@@ -623,3 +629,173 @@ for (const [input, expected] of cases) {
   }
 }
 console.log("sizing presets ok:", cases.length);
+
+// ── DSH's own session surfaces ──────────────────────────────────────────────
+// The header strip and the two row-menu entries are mounted by DSH, outside the
+// panel: they receive one session id, not the bootstrap snapshot, so their
+// contract is wording + which clicks are allowed. 归档 becomes 取消归档 once the
+// session is archived, and a trashed session offers nothing that writes.
+const { headerActionsFor, SessionHeaderActions, SessionMenuItems, DialogChannel, dialogStore } = mod.__test;
+const tKey = (key) => key;
+
+for (const name of ["conversation.session.header.actions", "sidebar.workspaces.session.menu.item"]) {
+  if (!registered.some(([slot]) => slot === name)) throw new Error("the plugin must inject into " + name);
+}
+
+const idleActions = headerActionsFor(null, tKey);
+if (idleActions.map((action) => action.key).join(",") !== "archive,favorite,todo,reveal,delete") {
+  throw new Error("the header must offer the five actions in DSH's order: " + JSON.stringify(idleActions.map((a) => a.key)));
+}
+if (idleActions.map((action) => action.label).join(",") !== "hdrArchive,hdrFavorite,hdrTodo,hdrReveal,hdrDelete") {
+  throw new Error("a live session must read 归档/收藏/待办/查看/删除: " + JSON.stringify(idleActions.map((a) => a.label)));
+}
+if (idleActions.some((action) => action.disabled)) throw new Error("a live session must leave every header action enabled");
+
+const onActions = headerActionsFor({ archived: true, favorite: true, todo: true }, tKey);
+if (onActions[0].label !== "hdrUnarchive" || onActions[1].label !== "hdrUnfavorite" || onActions[2].label !== "hdrUntodo") {
+  throw new Error("a set flag must offer its inverse: " + JSON.stringify(onActions.map((a) => a.label)));
+}
+if (!onActions[0].pressed || !onActions[1].pressed || !onActions[2].pressed) {
+  throw new Error("a set flag must read pressed, so the strip shows the state");
+}
+// 在会话资源管理器查看 only reads, so a trashed session keeps it; everything that
+// writes into the annotations document or moves the log is off.
+const trashedActions = headerActionsFor({ trashed: true }, tKey);
+if (trashedActions.filter((action) => action.disabled).map((action) => action.key).join(",") !== "archive,favorite,todo,delete") {
+  throw new Error("a trashed session must refuse every write: " + JSON.stringify(trashedActions.filter((a) => a.disabled).map((a) => a.key)));
+}
+// One write at a time: the annotations document is revision-guarded, so a second
+// click while one is in flight would just lose the race.
+const busyActions = headerActionsFor(null, tKey, "archive");
+if (busyActions.some((action) => !action.disabled)) throw new Error("a write in flight must disable every header action");
+
+const strip = render({ type: SessionHeaderActions, props: { sessionId: "session-1", t: tKey } });
+if (!strip) throw new Error("the header strip must render for a session");
+if (findAll(strip, hasClass("se-hdrActions")).length !== 1) throw new Error("the strip must be a .se-hdrActions");
+const stripButtons = findAll(strip, hasClass("se-hdrBtn"));
+if (stripButtons.length !== 5) throw new Error("the strip must render five buttons, got " + stripButtons.length);
+if (stripButtons.map((button) => button.props["data-action"]).join(",") !== "archive,favorite,todo,reveal,delete") {
+  throw new Error("the strip's buttons must carry their action: " + JSON.stringify(stripButtons.map((b) => b.props["data-action"])));
+}
+if (stripButtons.some((button) => button.props.disabled)) throw new Error("an unknown session state must not look disabled");
+
+// Every button is icon + word: the icon is a 16x16 inline svg stroked with
+// currentColor (so 删除 can paint it red), and the word lives in .se-hdrLabel,
+// which the narrow-window media query hides.
+for (const button of stripButtons) {
+  const key = button.props["data-action"];
+  const icons = findAll(button, hasClass("se-hdrIco"));
+  if (icons.length !== 1) throw new Error(key + " must carry exactly one icon, got " + icons.length);
+  if (!String(icons[0].props.className).includes("se-hdrIco-" + key)) {
+    throw new Error(key + " must carry its own icon, got " + icons[0].props.className);
+  }
+  if (icons[0].type !== "svg" || icons[0].props.viewBox !== "0 0 16 16") {
+    throw new Error(key + "'s icon must be a 16x16 svg");
+  }
+  if ((icons[0].children ?? []).length === 0) throw new Error(key + "'s icon must draw at least one path");
+  const labels = findAll(button, hasClass("se-hdrLabel"));
+  if (labels.length !== 1) throw new Error(key + " must carry exactly one label span");
+  if (textOf(labels[0]) !== button.props.title) {
+    throw new Error(key + "'s label must read what its title says");
+  }
+  // The tooltip stays the plain name, so hovering an armed 删除 still says 删除.
+  if (typeof button.props["aria-label"] !== "string") throw new Error(key + " must name itself for a screen reader");
+}
+
+// 删除 asks before it deletes: one click opens the plugin's dialog channel, and
+// nothing reaches the host until the question is answered "yes".
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+const deleteButton = stripButtons.find((button) => button.props["data-action"] === "delete");
+if (!deleteButton) throw new Error("the strip must render 删除");
+const callsBefore = fetchCalls.length;
+
+deleteButton.props.onClick();
+await flush();
+const pending = dialogStore.getSnapshot();
+if (!pending) throw new Error("删除 must open the confirm dialog");
+if (pending.kind !== "confirm" || pending.danger !== true) {
+  throw new Error("删除 must ask a danger confirm, got " + JSON.stringify({ kind: pending.kind, danger: pending.danger }));
+}
+if (pending.title !== "hdrDeleteTitle" || pending.confirmLabel !== "hdrDelete" || pending.cancelLabel !== "hdrCancel") {
+  throw new Error(
+    "the delete question must be worded by the strip: " +
+      JSON.stringify([pending.title, pending.confirmLabel, pending.cancelLabel]),
+  );
+}
+if (fetchCalls.length !== callsBefore) {
+  throw new Error("asking must not write: the delete reached the host before the answer");
+}
+
+// The question is drawn by the plugin on its own dialog layer, with a solid red
+// confirm button — the same red the 删除 button and menu row carry.
+const question = render({ type: DialogHost, props: { dialog: pending, promptRef: null, onSettle: () => {} } });
+if (findAll(question, hasClass("fmodal")).length !== 1) throw new Error("the question must be drawn on the dialog layer");
+const confirmButtons = findAll(question, hasClass("act")).filter((button) =>
+  String(button.props.className).includes("danger-solid"),
+);
+if (confirmButtons.length !== 1) throw new Error("the confirm button must be the red danger-solid one");
+if (textOf(confirmButtons[0]) !== "hdrDelete") throw new Error("the confirm button must read 删除");
+
+// 取消 answers no and writes nothing.
+dialogStore.settle(false);
+await flush();
+if (dialogStore.getSnapshot() !== null) throw new Error("answering must clear the dialog");
+if (fetchCalls.length !== callsBefore) throw new Error("取消 must not delete the session");
+
+// 删除 answers yes and the session goes to the trash.
+deleteButton.props.onClick();
+await flush();
+if (!dialogStore.getSnapshot()) throw new Error("删除 must ask again on every click");
+dialogStore.settle(true);
+await flush();
+if (!fetchCalls.some((call) => call.method === "POST" && call.url.endsWith("/trash"))) {
+  throw new Error("answering yes must post the session to the trash, saw " + JSON.stringify(fetchCalls.slice(callsBefore)));
+}
+if (dialogStore.getSnapshot() !== null) throw new Error("an answered dialog must leave the channel empty");
+
+// The channel is mounted beside the sidebar entry, so it exists while the panel
+// is closed and draws nothing when there is no question.
+if (render({ type: DialogChannel }) !== null) throw new Error("the channel must draw nothing without a question");
+console.log("header strip ok:", stripButtons.length, "buttons");
+
+// DSH mounts the slot per session view; without an id there is nothing to act on.
+if (render({ type: SessionHeaderActions, props: { t: tKey } }) !== null) {
+  throw new Error("the strip must render nothing without a session id");
+}
+
+const menuItems = render({ type: SessionMenuItems, props: { sessionId: "session-1", t: tKey } });
+if (!menuItems) throw new Error("the row menu entries must render");
+const menuLabels = textOf(menuItems);
+if (!menuLabels.includes("hdrReveal")) throw new Error("the first row must be 在会话资源管理器查看");
+if (!menuLabels.includes("hdrDelete")) throw new Error("the second row must be 删除");
+// The rows are drawn by the plugin (a client slot must not require a Harness
+// package), so both are .se-menuItem — no host row chrome is involved.
+const menuRows = findAll(menuItems, hasClass("se-menuItem"));
+if (menuRows.length !== 2) throw new Error("both entries must be .se-menuItem rows, got " + menuRows.length);
+if (menuRows.map((row) => row.props.role).join(",") !== "menuitem,menuitem") {
+  throw new Error("each row must be role=menuitem");
+}
+// The first row starts this group, so it carries the hairline; the second does not.
+if (!menuRows[0].props.className.includes("se-menuItem-sep")) {
+  throw new Error("the first entry must start the group with a separator");
+}
+if (menuRows[1].props.className.includes("se-menuItem-sep")) {
+  throw new Error("only the first entry of the group gets a separator");
+}
+// 删除 is destructive here too: same red, and the same question.
+if (!String(menuRows[1].props.className).includes("se-menuItem-danger")) {
+  throw new Error("the row menu's 删除 must carry the danger class");
+}
+const beforeMenuAsk = fetchCalls.length;
+menuRows[1].props.onClick();
+await flush();
+if (!dialogStore.getSnapshot()) throw new Error("the row menu's 删除 must ask before it deletes");
+if (fetchCalls.length !== beforeMenuAsk) throw new Error("the row menu must not delete before the answer");
+dialogStore.settle(false);
+await flush();
+// No session id: nothing to view or delete, so the menu must not grow rows.
+if (render({ type: SessionMenuItems, props: { t: tKey } }) !== null) {
+  throw new Error("the row menu entries must render nothing without a session id");
+}
+console.log("row menu entries ok: reveal + delete");
+
