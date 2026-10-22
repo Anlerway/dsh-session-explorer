@@ -356,30 +356,51 @@
     }
 
     // In DSH the panel is an overlay that starts closed. In the window it is the
-    // whole surface, so it starts open — and closing it closes the window.
+    // whole surface, so it starts open — and only the user closes it (see
+    // `watch` below).
     const store = exports.panelStore;
     if (store && typeof store.set === "function") store.set(true);
     watch(store);
   }
 
   /**
-   * Close the window when the panel closes.
+   * Decide what a panel close means in a window.
    *
-   * The panel's own close button, Escape, and "在 DSH 中打开" all end with
-   * `panelStore.set(false)`; in a window that means "done here".
+   * A window is not an overlay: it is the surface the user put on screen, so it
+   * only goes away when the user dismisses it (the caption's ×, or Escape).
+   * Every other close is the panel stepping aside for a view it would
+   * otherwise cover — "在 DSH 中打开", a new draft, moving out to the window —
+   * which is an overlay concern and means nothing here. Those are put back, so
+   * a double-clicked session opens in DSH *and* leaves the window standing.
+   *
+   * client.js states which is which (`panelStore.set(false, "user")` for the
+   * user's own gestures, the default "auto" for the code's), so this does not
+   * have to infer intent from call sites.
    *
    * @param {any} store
    */
   function watch(store) {
     if (!store || typeof store.subscribe !== "function" || typeof store.getSnapshot !== "function") return;
-    store.subscribe(() => {
+    store.subscribe((reason) => {
       let open = true;
       try {
         open = store.getSnapshot();
       } catch {
         /* a broken store is not a reason to stay open forever */
       }
-      if (!open) closeWindow();
+      if (open) return;
+      if (reason === "user") {
+        closeWindow();
+        return;
+      }
+      // Re-opening is the honest answer to a close that was not the user's: the
+      // window has nothing else to show, and an empty window would be a worse
+      // outcome than the step-aside it declined.
+      try {
+        store.set(true);
+      } catch {
+        /* an unreadable store is already covered above */
+      }
     });
   }
 

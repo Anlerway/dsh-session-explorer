@@ -365,17 +365,26 @@ replaying yesterday's "open session" after a restart would move the view unasked
 
 | Direction | Kind | What it buys |
 |---|---|---|
-| window → panel | `open-session` | 打开 in the window now really opens the session in DSH: the window publishes, the panel opens itself and calls `uiWorkspace.openSession` |
-| window → panel | `new-session` | 新建会话 in the window starts a draft in the current workspace |
+| window → panel | `open-session` | 打开 in the window really opens the session in DSH: the window publishes, the DSH page calls `uiWorkspace.openSession` — no panel needed, which is what 独立弹窗 mode leaves it without. The panel is raised only when it is the surface that can explain a refusal (a trashed session, a DSH build with no navigation service) |
+| window → panel | `new-session` | 新建会话 in the window starts a draft in the current workspace, the same way |
 | window → panel | `open-settings` | 更多设置… works from the window too: the window has no settings shell of its own, so the press travels here and the DSH page opens the window. The window's own copy of the command is its request echoing and is ignored |
 | page → window | `reveal` | 在会话资源管理器查看 with 默认打开方式 = 独立弹窗: the DSH page cannot navigate a panel that is not on screen, so it publishes the session id and the window lands on it. The page ignores this kind — it is the publisher |
 | Host → panel | `window-open` / `window-closed` | The panel knows whether 独立窗口 is on screen without polling |
 
-The panel keeps the id-copy fallback: with no panel listening (it is closed, or an older
-build), 打开 copies the session id and says so rather than pretending.
+The two window → page kinds have a second reader: the panel, but only when it is already
+mounted. In 独立弹窗 mode it never is, which is exactly why the page itself does the
+navigation — the panel used to be the only recipient, so a request from the window found
+nobody home and disappeared without a word.
 
 Closing the window is a user decision, not a crash: `launcher.js` records it and never
 respawns on the helper's exit, so 关闭 stays closed until the user opens it again.
+
+The same rule holds inside the page. The window *is* the panel, so the panel cannot close
+itself as a side effect of anything: 打开, 新建会话, 更多设置… and 移到独立窗口 all leave it
+standing. `panelStore` therefore carries a close *reason* — `set(false, "user")` for the ×
+button, Escape, the scrim and the sidebar toggle, `set(false)` for the code stepping aside —
+and the window closes only on `"user"`. In DSH the distinction is invisible, because a
+closed overlay costs nothing.
 
 ## Navigation model
 

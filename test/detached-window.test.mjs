@@ -125,14 +125,19 @@ function fakeModule(options = {}) {
     return null;
   };
   const listeners = new Set();
+  // Shaped like the real store: a close carries why it happened, and the
+  // listener is told — that is the only thing that lets the window tell a
+  // dismissal from the panel stepping aside.
   const store = {
     open: false,
-    set(value) {
+    reason: "open",
+    set(value, reason = "auto") {
       store.open = value;
-      for (const listener of [...listeners]) listener();
+      store.reason = value ? "open" : reason;
+      for (const listener of [...listeners]) listener(store.reason);
     },
     toggle() {
-      store.set(!store.open);
+      store.set(!store.open, "user");
     },
     getSnapshot() {
       return store.open;
@@ -259,19 +264,33 @@ test("the window translates with the dictionary the module registers", () => {
   assert.equal(t("missing"), "missing");
 });
 
-test("closing the panel closes the window", async () => {
+test("a panel close the user asked for closes the window", async () => {
   const ctx = harness();
   const module = load(fakeModule(), ctx);
 
-  module.store.set(false);
+  module.store.set(false, "user");
   await tick();
 
   const closes = ctx.calls.filter((call) => call.url === "/window" && call.method === "close");
   assert.equal(closes.length, 1, "the frame was asked to close, once");
 
-  module.store.set(false);
+  module.store.set(false, "user");
   await tick();
   assert.equal(ctx.calls.filter((call) => call.method === "close").length, 1, "and only once");
+});
+
+test("a panel close the code performed leaves the window standing", async () => {
+  const ctx = harness();
+  const module = load(fakeModule(), ctx);
+
+  // 在 DSH 中打开, a new draft, moving out to the window: the panel steps aside
+  // for a view it would cover. That is an overlay concern, and in a window it
+  // would mean the window vanishing the instant a session was opened.
+  module.store.set(false);
+  await tick();
+
+  assert.equal(ctx.calls.filter((call) => call.method === "close").length, 0, "the frame was left alone");
+  assert.equal(module.store.getSnapshot(), true, "and the panel is back on screen");
 });
 
 // ── the caption ───────────────────────────────────────────────────────────

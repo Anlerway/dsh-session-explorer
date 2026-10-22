@@ -15,6 +15,10 @@
  *      settings shell to open: the press travels to the DSH page as a bridge
  *      command, and the window's copy of that command is ignored rather than
  *      acted on.
+ *   4. 打开 from the window must open the session in DSH even though 独立弹窗 mode
+ *      leaves the DSH page without a panel — the page navigates itself instead of
+ *      asking a panel that is not there, and the window stays open afterwards
+ *      (a window is not an overlay; only the user closes it).
  *
  * No DOM library: the stubs below answer exactly the selectors the bundle uses,
  * which also documents them.
@@ -96,13 +100,14 @@ function routedFetch(routes) {
 
 /**
  * The host context the entry points need: a `shortcuts` service, and — only when
- * a test is playing the detached window — a `hostBridge`.
+ * a test is playing the detached window — a `hostBridge`. `uiWorkspace` is
+ * DSH's own navigation service, and only the page inside DSH has it.
  *
  * `locale.bind` answers `navLabel` the way the real dictionaries do, because the
  * section is found by its label: a translator that echoed keys back would hide a
  * regression in the click-the-right-cell step.
  */
-function makeHost({ invocations, onInvoke, hostBridge } = {}) {
+function makeHost({ invocations, onInvoke, hostBridge, uiWorkspace } = {}) {
   const service = {
     registry: {
       invoke(id, context) {
@@ -121,6 +126,7 @@ function makeHost({ invocations, onInvoke, hostBridge } = {}) {
     get: (name) => {
       if (name === "shortcuts") return service;
       if (name === "hostBridge") return hostBridge;
+      if (name === "uiWorkspace") return uiWorkspace;
       return undefined;
     },
     shortcuts: service,
@@ -482,5 +488,108 @@ test("revealing a session in a panel that is already up never spawns a window", 
   // an extra round trip would only delay a navigation that is already possible.
   assert.deepEqual(paths, []);
   assert.equal(bundle.panelStore.getSnapshot(), true);
+});
+
+// ── 打开, from the detached window ──────────────────────────────────────────
+// In 独立弹窗 mode the panel is never mounted on the DSH page — the window *is*
+// the explorer — so the bridge handler cannot reach the panel's callback. It
+// used to, found nothing, and the request vanished: double-clicking a session in
+// the window opened nothing in DSH.
+
+/** Boot the bundle with a bus, a host, and no panel ever mounted. */
+async function withPage({ hostBridge, uiWorkspace } = {}) {
+  const page = {};
+  await withBus(async (sources) => {
+    const { document } = makeDom();
+    const { bundle, test: api } = loadClientBundle({ document, expose: EXPOSE });
+    const host = makeHost({ hostBridge, uiWorkspace });
+    host.effect = (fn) => {
+      const dispose = fn();
+      return typeof dispose === "function" ? dispose : () => {};
+    };
+    bundle.apply(host);
+    page.bundle = bundle;
+    page.api = api;
+    page.emit = (command) => sources.at(-1).emit("command", command);
+  });
+  return page;
+}
+
+test("a session the window opens is opened in DSH with no panel on the page", async () => {
+  const opened = [];
+  const page = await withPage({
+    uiWorkspace: {
+      openSession: (id) => opened.push(id),
+      startSession: () => {},
+    },
+  });
+  assert.equal(page.bundle.panelStore.getSnapshot(), false, "no panel is mounted on this page");
+
+  page.emit({ seq: 11, kind: "open-session", payload: { sessionId: "s1" } });
+
+  assert.deepEqual(opened, ["s1"], "DSH was asked to open it");
+  // The window is the surface the user is looking at; raising a panel here would
+  // cover the main view *and* leave two explorers on screen.
+  assert.equal(page.bundle.panelStore.getSnapshot(), false);
+});
+
+test("a new session the window starts is started in DSH with no panel on the page", async () => {
+  const started = [];
+  const page = await withPage({
+    uiWorkspace: {
+      openSession: () => {},
+      startSession: (workspaceId) => started.push(workspaceId),
+    },
+  });
+
+  page.emit({ seq: 12, kind: "new-session", payload: { workspaceId: "w1" } });
+
+  assert.deepEqual(started, ["w1"]);
+  assert.equal(page.bundle.panelStore.getSnapshot(), false);
+});
+
+test("the window ignores the open-session it published itself", async () => {
+  const opened = [];
+  const page = await withPage({
+    // `hostBridge` is what makes this document the window.
+    hostBridge: { request: async () => null },
+    // The window's `uiWorkspace` is the shim's: asking it again would publish
+    // the same command back at the page.
+    uiWorkspace: { openSession: (id) => opened.push(id), startSession: () => {} },
+  });
+  assert.ok(page.api.windowHost(), "this document is the window");
+
+  page.emit({ seq: 13, kind: "open-session", payload: { sessionId: "s1" } });
+
+  assert.deepEqual(opened, [], "the window is where the command came from");
+});
+
+test("an open this page cannot serve raises the panel that can explain it", async () => {
+  // No `uiWorkspace`: an older DSH. Nothing here can navigate, and the panel is
+  // the one surface that can say so — so the request is queued for it instead of
+  // disappearing.
+  const page = await withPage();
+  page.emit({ seq: 14, kind: "open-session", payload: { sessionId: "s1" } });
+  assert.equal(page.bundle.panelStore.getSnapshot(), true);
+});
+
+// ── The store's close reason ───────────────────────────────────────────────
+// The window has to tell "the user dismissed this" from "the code stepped
+// aside". It cannot infer that from call sites, so the store states it.
+
+test("a panel close states whether the user asked for it", () => {
+  const { document } = makeDom();
+  const { bundle } = loadClientBundle({ document, expose: EXPOSE });
+  const reasons = [];
+  bundle.panelStore.subscribe((reason) => reasons.push(reason));
+
+  bundle.panelStore.set(true);
+  bundle.panelStore.set(false); // 在 DSH 中打开, a new draft, moving out to the window
+  bundle.panelStore.set(true);
+  bundle.panelStore.set(false, "user"); // the × button, Escape
+  bundle.panelStore.set(true);
+  bundle.panelStore.toggle(); // the sidebar entry
+
+  assert.deepEqual(reasons, ["open", "auto", "open", "user", "open", "user"]);
 });
 
