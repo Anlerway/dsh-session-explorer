@@ -18,7 +18,7 @@ const here = (path) => new URL("../" + path, import.meta.url);
 const read = (path) => readFileSync(here(path), "utf8");
 
 const CLIENT = read("lib/client.js");
-const { test: internals } = loadClientBundle({ expose: ["panelDict", "T"] });
+const { test: internals } = loadClientBundle({ expose: ["panelDict", "T", "FIXED_META"] });
 
 /** @returns {Map<string, string>} */
 const dictionary = () => internals.panelDict();
@@ -144,6 +144,24 @@ test("no Chinese literal is left standing in the panel", () => {
     bare.push("lib/client.js:" + line + " " + literal.text.slice(0, 40));
   }
   assert.deepEqual(bare, [], "these would render as Chinese in an English window");
+});
+
+test("the fixed folders and the default workspace follow the reader's language", () => {
+  // These rows are named by the host, in Chinese, because that is what they are
+  // called there. The panel does not print those names: it looks the label up in
+  // FIXED_META, whose label is a getter over T() — a plain string would freeze at
+  // whatever language the module happened to load in.
+  const table = dictionary();
+  for (const entry of Object.values(internals.FIXED_META)) {
+    const key = entry.label;
+    assert.ok(CJK.test(key), "a fixed entry's label getter returns its Chinese source text");
+    assert.ok(typeof table[key] === "string" && table[key].length > 0, "no English line for the fixed folder " + key);
+  }
+  // The default workspace is not a fixed id: the registry gives it a title of its
+  // own, so the node travels with a flag and the panel decides from that.
+  assert.equal(table["默认工作区"], "Default workspace");
+  assert.match(CLIENT, /if \(node\.fixed && fixed\) return fixed\.label;/);
+  assert.match(CLIENT, /if \(node\.default === true\) return T\("默认工作区"\);/);
 });
 
 test("no Chinese literal is left standing in the detached window's shim", () => {

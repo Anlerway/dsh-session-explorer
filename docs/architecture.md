@@ -200,7 +200,7 @@ if (!isUsableDataDir(dataDir)) throw codedError("reset-refused", "…");        
 
 ## 5. Client 半体：`apply(ctx)` 注册了什么
 
-`lib/client.js:10339-10510`。`inject = ["slots", "locale", "uiWorkspace"]`（`:10513`）。
+`lib/client.js:10734-10905`。`inject = ["slots", "locale", "uiWorkspace"]`（`:10908`）。
 
 **插槽**（order 决定与 DSH 自带条目的相对位置）：
 
@@ -215,16 +215,48 @@ if (!isUsableDataDir(dataDir)) throw codedError("reset-refused", "…");        
 **effect**（随插件卸载自动清理）：
 
 - 主题上报：`reportTheme()` + `MutationObserver` 监听 `documentElement` 的
-  `class` / `data-theme` / `style`（`:10192-10205`）；
+  `class` / `data-theme` / `style`（`:10754-10774`）；
 - 桥订阅：`subscribeBridge(...)`，处理 `open-session` / `new-session` / `open-settings` /
-  `reveal` / `window-closed`（`:10207-10264`）；
-- 词典注册：`ctx.locale.register(NS, { zh, en })`（`:10265`）。
+  `reveal` / `window-closed`（`:10776-10825`）；
+- 词典注册：`ctx.locale.register(NS, { zh, en })`（`:10827`）。
 
-**导出**：`apply` / `inject` / `panelStore` / `SettingsSection`（`:10345-10347`）。
+**导出**：`apply` / `inject` / `panelStore` / `SettingsSection`（`:10907-10910`）。
 
-浮窗本体是 `Panel`（`lib/client.js:4687`，单函数约 4000 行，内部按功能分段），
+浮窗本体是 `Panel`（`lib/client.js:4729`，单函数约 4000 行，内部按功能分段），
 它被 portal 到 `<body>` 上的固定层——侧栏有 `overflow: hidden`，原地渲染会被裁掉
 （`lib/client.js:594` 的注释）。
+
+### 5.1 面板与独立窗口的双语：两套机制，一条链路
+
+按「这一屏的标签是不是固定的」分工：
+
+- **设置页**用 DSH 的命名键字典（`t("setStarHint")`）：一屏固定表单，键名可读比字面量值钱。
+- **面板与独立窗口**用 `T(中文原文, params)`（`lib/client.js:1786` 起的注释块下方）：键就是中文原文。
+  三百多条散在渲染树里的短标签，命名键只会多一层间接；而且改字时字典未命中的后果是
+  「显示中文」而不是「在页面上印出 key」。插值统一 `{0}` / `{1}`，和设置页的 `{size}` 风格互不干扰。
+
+`T` 读模块级的 `panelLang`，而 `Panel` 每次渲染都从 props 的翻译器刷新它：
+`panelLang = typeof t === "function" && t("langCode") === "en" ? "en" : "zh";`（`lib/client.js:4732`）。
+语言开关一动，DSH 用新的 `t` 重渲染插槽，下一帧就是新语言。代价是模块级表（`FIXED_META`、
+`COLUMNS`）的 `label` 必须写成 `get label() { return T("…"); }`——直接赋值会在模块加载时求值、
+永久冻在中文。英文表在 `panelDict()`（`lib/client.js:9910`）。
+
+宿主发来的名字也属于同一类，只是来源不同：固定目录（所有会话 / 未分组 / 待办 / 收藏 / 回收站 / 根目录）
+的 `name` 在 host 那边是标识符、写法就是中文，所以 `nodeLabel()` 不印它，而是取
+`FIXED_META[node.id].label`。默认工作区连固定 id 都没有——注册表里它的标题是 `default-workspace`，
+host 画成「默认工作区」——节点因此带一个 `default: true` 标志，`nodeLabel()` 看到标志就取
+`T("默认工作区")`；用户自己改过名的工作区保留原名，这也是判据用标志而不是字符串的原因。
+
+独立窗口是另一侧：`assets/detached` 是静态页 + 冒充 DSH 的 shim，它读不到 DSH 的语言开关，
+也不会跟着 DSH 重渲染。所以语言由面板在 `POST /detached/open` 里报给 host（`uiLang()`，
+`lib/client.js:1807`），经控制器 `lib/detached/launcher.js` 放进 helper 的 env（`DSH_SE_LANG`），
+helper 拼进页面 URL（`?lang=`，`lib/detached/main.cjs` 的 `pageUrl()`），shim 从 URL 读出 `LANG`，
+之后每句都过 `L(zh, en)`。中途切换语言时控制器用控制通道广播 `{ type: "lang" }`，helper 直接
+`win.loadURL()` reload——字典是页面加载时定死的，reload 是唯一能让新字典生效的方式。
+`index.html` 仍然随中文首发（HTML 在任何脚本之前就被解析完），英文窗口的标题与启动语由 shim 事后改写。
+
+`test/panel-copy.test.mjs` 守着这条链的可见后果：`T()` 的每个键都在表里、表里没有空值或中文、
+占位符两边一致，以及渲染树里不许有裸中文字面量（注释与样式表除外）。
 
 ## 6. 数据流
 

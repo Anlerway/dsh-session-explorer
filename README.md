@@ -9,6 +9,7 @@
 > workspace、文件夹、会话共用一条置顶带；收藏和待办装的是快捷方式而不是副本；
 > 面板有标签页、可调三栏、行内重命名和命令栏。设置页结尾两组是「关于」（版本号、检查更新、
 > 清理缓存、Star 与反馈入口）和「危险操作」：清除数据——不可逆，要照字打一遍 DELETE。
+> 面板、独立窗口和设置页都跟随 DSH 的语言开关（中文 / English），切换即刻生效。
 
 ## 两个面，一份 UI
 
@@ -51,7 +52,7 @@ lib/
   detached/           Electron helper：launcher、main.cjs、preload.cjs
 assets/detached/      独立窗口的页面：index.html、window.css、shim.js（不自带 UI）
 assets/vendor/        自带 React 18.3.1 UMD 构建
-test/                 32 个测试文件 + render-smoke
+test/                 33 个测试文件 + render-smoke
 docs/                 开发文档（见下）
 ```
 
@@ -105,7 +106,7 @@ desktop profile 是 Electron 应用组装出来的，`dsh profile` 也重建不�
 | [docs/tree-and-placement.md](docs/tree-and-placement.md) | 节点种类、R1–R5、计数、快捷方式 |
 | [docs/bridge-and-theme.md](docs/bridge-and-theme.md) | 命令总线、SSE、主题同步 |
 | [docs/component.md](docs/component.md) | 浏览器组件的状态机与安装流程 |
-| [docs/testing.md](docs/testing.md) | 三十二个测试文件各钉住什么 |
+| [docs/testing.md](docs/testing.md) | 三十三个测试文件各钉住什么 |
 
 ## 测试
 

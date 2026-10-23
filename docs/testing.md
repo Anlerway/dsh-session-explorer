@@ -13,7 +13,7 @@ npm run test:render      # node test/render-smoke.mjs
 测试全部用 `node:test` + `node:assert`，没有第三方测试框架、没有 DOM 实现依赖——
 `render-smoke` 自带一个极小的假 document。
 
-## 1. 三十二个测试文件，各自钉住什么
+## 1. 三十三个测试文件，各自钉住什么
 
 | 文件 | 行数 | 钉住的东西 |
 |---|---|---|
@@ -35,7 +35,7 @@ npm run test:render      # node test/render-smoke.mjs
 | `test/datadir.test.mjs` | 364 | 数据目录迁移：预检、七步、回滚、`.location` |
 | `test/component.test.mjs` | 369 | 组件状态机：单飞锁、复用、校验、pending 清扫 |
 | `test/export.test.mjs` | 154 | 会话日志 → Markdown / JSONL |
-| `test/detached-window.test.mjs` | 422 | 独立窗口的页面、路由、以及冒充 DSH 的 shim |
+| `test/detached-window.test.mjs` | 561 | 独立窗口的页面、路由、冒充 DSH 的 shim，以及 `?lang=` 决定的那一半文案 |
 | `test/client-launch.test.mjs` | 595 | 两个入口对着 stub 宿主跑；两条"线上才炸"的路径 |
 | `test/row-rename.test.mjs` | 185 | 列表行必须打开自己的重命名编辑器，而不是别人的 |
 | `test/row-rail.test.mjs` | 169 | 子会话引导线的几何：必须落在上面那个折叠箭头的中心（深度 0 与非 0 是两条式子） |
@@ -48,6 +48,7 @@ npm run test:render      # node test/render-smoke.mjs
 | `test/update.test.mjs` | 135 | 更新检查：数字段比较、release 解析、5 分钟缓存、失败码而不是假"已是最新" |
 | `test/about.test.mjs` | 236 | 链接白名单与降级链，以及缓存清理只清自己的（quarantine 与会话不动，组件在装就跳过） |
 | `test/locale-parity.test.mjs` | 88 | 中英两份字典键集合一致、占位符一致、英文标签放得下；设置页的 token 块必须自带 `--sm-danger` |
+| `test/panel-copy.test.mjs` | 189 | 面板每一句中文都有英文对照：字典覆盖全部 `T()`、没有裸中文残留（注释与样式表除外）、占位符不丢；固定目录与默认工作区也走字典；shim 同理（例外是 `L()`） |
 | `test/reset.test.mjs` | 208 | 清除数据：一个字都没动之前先验 `DELETE`、四份侧车与回收站本体一起删、组件与数据目录本身留下、迁移路径写回 |
 | `test/render-smoke.mjs` | 916 | 每个组件真实渲染一次（不是 `node --test` 的一部分） |
 
