@@ -13,7 +13,7 @@
 | [tree-and-placement.md](tree-and-placement.md) | 节点种类、R1–R5、计数、虚拟放置、快捷方式 | 改左侧树或拖拽 |
 | [bridge-and-theme.md](bridge-and-theme.md) | 面板 ↔ 窗口的命令总线、SSE、主题同步 | 改独立窗口或配色 |
 | [component.md](component.md) | 浏览器组件：状态机、镜像、校验、发布、清扫 | 改安装流程 |
-| [testing.md](testing.md) | 三十一个测试文件各钉住什么、怎么跑 | 提交之前 |
+| [testing.md](testing.md) | 三十二个测试文件各钉住什么、怎么跑 | 提交之前 |
 
 ## 三条最容易被违反的约定
 
@@ -44,7 +44,7 @@ lib/
   detached/           Electron helper：launcher、main.cjs、preload.cjs
 assets/detached/      独立窗口的页面：index.html、window.css、shim.js（不自带 UI）
 assets/vendor/        自带 React 18.3.1 UMD 构建（无构建步骤的前提）
-test/                 31 个测试文件 + render-smoke
+test/                 32 个测试文件 + render-smoke
 ```
 
 `client.js` 是**刻意**的单文件：没有构建步骤是这个插件能在 DSH 的模块加载器里直接跑起来的前提。

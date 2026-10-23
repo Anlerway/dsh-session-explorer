@@ -487,7 +487,7 @@ host 做。仓库地址只在 `lib/constants.js` 的 `REPO_URL` 写一次，API 
 过了门，它删的是插件自己的记录：
 
 - 四份侧车文档 `tree.v1.json` / `annotations.v1.json` / `settings.v1.json` /
-  `trash/index.v1.json`：文件夹、标签、备注、设置、回收站索引；
+  `trash/index.v1.json`：**虚拟树**（文件夹、工作区摆放与顺序）、标签、备注、设置、回收站索引；
 - `trash/` 里的**净内容**。回收站是 move 不是 copy（`lib/host/trash.js`），里面的目录
   曾经就是 DSH 的会话目录，删掉它们等于把这些会话永久删掉——这就是它必须被 `DELETE` 拦住的原因；
 - `quarantine/`（解析不了的文档，是用户自己的字节）与 `.tmp/`（写了一半的原子写残留）。

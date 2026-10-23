@@ -24,7 +24,7 @@ package.json
 ├─ dsh.bundle.patch = "./cordis.patch.yml"
 │    └─ - insert: [{ id: session-explorer, name: 'dsh-session-explorer', config: {} }]
 │         → Cordis 按包名 import，取 name / inject / apply
-│           (lib/index.js:87 name, lib/index.js:92 inject, lib/index.js:101 apply)
+│           (lib/index.js:104 name, lib/index.js:109 inject, lib/index.js:118 apply)
 └─ dsh.client.inject = "@deepseek-ai/dsh-client-ui-slots"
    dsh.client.platform = "web"
      → 渲染进程把 lib/client.js 当作 out-of-tree client 模块执行
@@ -178,8 +178,8 @@ DSH 自己的 `storages/session_projcache` 一律不碰；组件正在下载/校
 
 ### 4.2 唯一不可逆的操作：清除数据
 
-设置页最后一组（「危险操作」）只有一个按钮，它删的是用户自己的东西：文件夹、标签、备注、设置、
-回收站索引，以及回收站里的**会话目录本体**。回收站是 move 不是 copy（`host/trash.js`），
+设置页最后一组（「危险操作」）只有一个按钮，它删的是用户自己的东西：**虚拟树**（文件夹、工作区
+摆放与顺序）、标签、备注、设置、回收站索引，以及回收站里的**会话目录本体**。回收站是 move 不是 copy（`host/trash.js`），
 那些目录曾经就是 DSH 的会话目录——这一步没有"再点一次还原"可退。
 
 所以判断全在 `host/reset.js`，客户端只把用户打的字原样送上去：
@@ -222,7 +222,7 @@ if (!isUsableDataDir(dataDir)) throw codedError("reset-refused", "…");        
 
 **导出**：`apply` / `inject` / `panelStore` / `SettingsSection`（`:10345-10347`）。
 
-浮窗本体是 `Panel`（`lib/client.js:4683`，单函数约 4000 行，内部按功能分段），
+浮窗本体是 `Panel`（`lib/client.js:4687`，单函数约 4000 行，内部按功能分段），
 它被 portal 到 `<body>` 上的固定层——侧栏有 `overflow: hidden`，原地渲染会被裁掉
 （`lib/client.js:594` 的注释）。
 

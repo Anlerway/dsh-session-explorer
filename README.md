@@ -51,7 +51,7 @@ lib/
   detached/           Electron helper：launcher、main.cjs、preload.cjs
 assets/detached/      独立窗口的页面：index.html、window.css、shim.js（不自带 UI）
 assets/vendor/        自带 React 18.3.1 UMD 构建
-test/                 31 个测试文件 + render-smoke
+test/                 32 个测试文件 + render-smoke
 docs/                 开发文档（见下）
 ```
 
@@ -105,7 +105,7 @@ desktop profile 是 Electron 应用组装出来的，`dsh profile` 也重建不�
 | [docs/tree-and-placement.md](docs/tree-and-placement.md) | 节点种类、R1–R5、计数、快捷方式 |
 | [docs/bridge-and-theme.md](docs/bridge-and-theme.md) | 命令总线、SSE、主题同步 |
 | [docs/component.md](docs/component.md) | 浏览器组件的状态机与安装流程 |
-| [docs/testing.md](docs/testing.md) | 三十一个测试文件各钉住什么 |
+| [docs/testing.md](docs/testing.md) | 三十二个测试文件各钉住什么 |
 
 ## 测试
 
