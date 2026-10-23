@@ -1,10 +1,11 @@
 {
-  "name": "dsh-session-explorer",
+  "name": "@anlerway/dsh-session-explorer",
   "version": "1.0.0",
   "description": "会话资源管理器 (Session resource manager) for DeepSeek Harness: virtual folders, tags, notes, trash and multi-workspace session browsing on top of the native DSH session store.",
   "type": "module",
   "engines": {
-    "node": "^22.15.0 || >=24.0.0"
+    "node": "^22.15.0 || >=24.0.0",
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
   },
   "main": "./lib/index.js",
   "icon": "./assets/icon.png",
@@ -37,6 +38,9 @@
     "url": "git+https://github.com/Anlerway/dsh-session-explorer.git"
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"

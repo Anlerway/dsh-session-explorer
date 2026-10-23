@@ -9,5 +9,5 @@
 
 - insert:
     - id: session-explorer
-      name: 'dsh-session-explorer'
+      name: '@anlerway/dsh-session-explorer'
       config: {}

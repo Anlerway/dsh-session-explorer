@@ -56,13 +56,53 @@ test/                 34 个测试文件 + render-smoke
 docs/                 开发文档（见下）
 ```
 
-## 安装（本地、树外）
+## 安装
+
+要求：DSH `>=0.2.1-rc.2 <0.3.0`，Node `^22.15.0 || >=24.0.0`。四种方式任选，**从上到下越来越手动**。
+
+### 1. DSH 内置插件管理器（推荐）
+
+插件页 →「已安装」旁的**「发现」**标签 → **添加索引源**，填：
+
+```text
+https://anlerway.github.io/dsh-session-explorer/market/index.json
+```
+
+搜「会话资源管理器 / Session Explorer」→ **安装** → 确认来源是 npm 上的 `@anlerway/dsh-session-explorer` → 重启 DSH。
+
+> 「发现」依赖实验性组合包**自定义插件市场**：插件页 → 实验性插件旁的「更多」→ 打开开关。
+> 索引随仓库发布（`market/index.json`），需要仓库启用 GitHub Pages；没启用就直接用第 2 步。
+
+### 2. npm（一条命令）
+
+```bash
+dsh plugin --profile web add @anlerway/dsh-session-explorer   # 桌面版用 --profile desktop
+```
+
+装完重启 DSH。
+
+### 3. GitHub 源码
+
+```bash
+dsh plugin --profile web add github:Anlerway/dsh-session-explorer
+```
+
+本插件没有构建步骤（`lib/` 直接随仓库走），但 `koffi` 这类依赖带安装脚本，pnpm ≥10 第一次会拒绝执行并把包名打印出来——按提示写进 profile 的 `pnpm-workspace.yaml` 再重跑：
+
+```yaml
+allowBuilds:
+  "@anlerway/dsh-session-explorer": true
+```
+
+（等于授权安装期在本机执行代码，只对信得过的仓库这么做，最好 pin 到 commit。）
+
+### 4. 本地 checkout（开发用）
 
 ```bash
 # 1. 让包在 desktop profile 里可解析
 cd ~/.dsh/profiles/desktop
-#    package.json -> dependencies: { "dsh-session-explorer": "link:<绝对路径>" }
-#    package.json -> dsh.profile.bundles: [... "dsh-session-explorer" ...]
+#    package.json -> dependencies: { "@anlerway/dsh-session-explorer": "link:<绝对路径>" }
+#    package.json -> dsh.profile.bundles: [... "@anlerway/dsh-session-explorer" ...]
 #    然后建好 node_modules 里的条目（Windows 上是 junction）
 
 # 2. 重启 DSH 应用

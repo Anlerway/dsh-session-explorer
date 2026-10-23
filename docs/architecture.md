@@ -22,7 +22,7 @@ portal 到 `<body>` 上的固定层。
 ```
 package.json
 ├─ dsh.bundle.patch = "./cordis.patch.yml"
-│    └─ - insert: [{ id: session-explorer, name: 'dsh-session-explorer', config: {} }]
+│    └─ - insert: [{ id: session-explorer, name: '@anlerway/dsh-session-explorer', config: {} }]
 │         → Cordis 按包名 import，取 name / inject / apply
 │           (lib/index.js:104 name, lib/index.js:109 inject, lib/index.js:118 apply)
 └─ dsh.client.inject = "@deepseek-ai/dsh-client-ui-slots"

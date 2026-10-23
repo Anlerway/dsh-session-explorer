@@ -1,0 +1,42 @@
+{
+  "format": 1,
+  "title": {
+    "en": "Anlerway plugins",
+    "zh": "Anlerway 插件"
+  },
+  "description": {
+    "en": "Plugins published by Anlerway for DeepSeek Harness.",
+    "zh": "Anlerway 发布给 DeepSeek Harness 的插件。"
+  },
+  "plugins": [
+    {
+      "name": "@anlerway/dsh-session-explorer",
+      "title": {
+        "en": "Session Explorer",
+        "zh": "会话资源管理器"
+      },
+      "description": {
+        "en": "Resource-manager style session browser for DSH: virtual folders, tags, notes, trash and multi-workspace browsing.",
+        "zh": "资源管理器式的会话浏览器：虚拟文件夹、标签、备注、回收站、多 workspace 浏览，从不改动 ~/.dsh 的物理布局。"
+      },
+      "icon": "icons/icon.png",
+      "author": "Anlerway",
+      "homepage": "https://github.com/Anlerway/dsh-session-explorer#readme",
+      "repository": {
+        "url": "https://github.com/Anlerway/dsh-session-explorer"
+      },
+      "versions": [
+        {
+          "version": "1.0.0",
+          "publishTimestamp": 1792770777,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.2 <0.3.0"
+          }
+        }
+      ]
+    }
+  ]
+}
