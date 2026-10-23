@@ -84,7 +84,10 @@ C:\Users\<user>\.dsh-session-explorer   ← 本插件的
                 "closeOnBackdrop": true },
     "window": { "alwaysOnTop": false, "bounds": null } // 独立窗口记住的几何
   },
-  "list": { "autoCollapse": false, "showArchived": true },
+  "list": { "autoCollapse": false,
+            "showArchived": true,
+            "collapseSubagents": true,   // 折叠子智能体：开关，默认折叠
+            "hideBlank": true },         // 过滤空会话：开关，默认过滤
   "dataDir": { "current": null }
 }
 ```
@@ -92,6 +95,10 @@ C:\Users\<user>\.dsh-session-explorer   ← 本插件的
 三条硬约束写在这个文件里：`dim` 默认 0 且上限 `MAX_DIM = 0.8`（面板在壁纸上要看得清）；
 归档是视觉降权而不是隐藏，所以 `showArchived` 默认 `true`；
 默认打开方式是浮窗，因为它不会失败——独立窗口依赖可能没装的组件。
+
+`collapseSubagents` 以前是 `subagents: "collapsed" | "expanded"` 两选一，现在是一个开关：
+两种状态本来就是全部选择，用词表把它做成模式只是让一个二元偏好看起来更复杂。旧文档里的
+`subagents` 仍然被读：`expanded` 迁成 `false`，两者同时存在时以开关为准。
 
 `mergeSettings()` 只认已知键，未知键在归一化时被丢掉，而不是落盘等下个版本困惑。
 

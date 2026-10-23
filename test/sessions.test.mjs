@@ -19,6 +19,7 @@ function viewOf(headers, options = {}) {
     projcache: new Map(),
     registry: options.registry ?? null,
     running: options.running ?? new Set(),
+    logFacts: options.logFacts ?? new Map(),
     annotations: options.annotations ?? {},
   });
 }
@@ -180,4 +181,49 @@ test("a fork is not dragged into its source's workspace", () => {
 test("displayTitle falls back to the cwd folder name", () => {
   assert.equal(displayTitleOf({ title: "real title", cwd: "C:\\x", id: "s" }), "real title");
   assert.equal(displayTitleOf({ title: "", cwd: "C:\\work\\proj", id: "s" }), "proj");
+});
+
+test("a log that never started a turn is blank, and the log outranks the cache", () => {
+  // The projcache only knows about sessions DSH itself listed; a log the plugin
+  // found by walking the data dir has no record. Its first frame is the witness.
+  const view = viewOf([{ id: "s" }], {
+    logFacts: new Map([["s", { turnStart: false, lastType: "session/header", torn: false }]]),
+  });
+  assert.equal(view.sessions[0].blank, true);
+
+  // A cache that says "blank" is not the truth when the log holds a turn.
+  const view2 = viewOf([{ id: "s" }], {
+    logFacts: new Map([["s", { turnStart: true, lastType: "turn/end", torn: false }]]),
+  });
+  assert.equal(view2.sessions[0].blank, false);
+
+  // No log facts at all: fall back to whatever the cache said (here: unknown).
+  assert.equal(viewOf([{ id: "s" }]).sessions[0].blank, null);
+});
+
+test("a log that ends mid-turn is 已中断, not 空闲", () => {
+  // A crash, a killed process, a window closed mid-answer: the last event is a
+  // `turn/start` that never got its `turn/end`. DSH knows liveness only in
+  // memory, so the file itself is the only witness that the turn was cut off.
+  const view = viewOf([{ id: "cut" }, { id: "done" }, { id: "live" }], {
+    logFacts: new Map([
+      ["cut", { turnStart: true, lastType: "turn/start", torn: false }],
+      ["done", { turnStart: true, lastType: "turn/end", torn: false }],
+      ["live", { turnStart: true, lastType: "turn/start", torn: false }],
+    ]),
+    running: new Set(["live"]),
+  });
+  const byId = new Map(view.sessions.map((session) => [session.id, session]));
+  assert.equal(byId.get("cut").interrupted, true);
+  assert.equal(byId.get("done").interrupted, false);
+  // Both flags can be true at once; the UI lets `running` win, because an open
+  // log that belongs to a live session is a turn in progress.
+  assert.equal(byId.get("live").interrupted, true);
+  assert.equal(byId.get("live").running, true);
+  // A log whose first turn could not be located is never called interrupted:
+  // an unread head must not produce a scary label.
+  const unknown = viewOf([{ id: "u" }], {
+    logFacts: new Map([["u", { turnStart: null, lastType: "turn/start", torn: false }]]),
+  });
+  assert.equal(unknown.sessions[0].interrupted, false);
 });

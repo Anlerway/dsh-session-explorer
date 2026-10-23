@@ -1,4 +1,5 @@
-# Dependencies are never installed into this repo: the plugin has none.
+# The only runtime dependency is koffi (a prebuilt Node-API binding for the
+# Windows shell reveal); it is installed next to the plugin, never committed.
 node_modules/
 
 # Scratch space. Anything that is not the plugin itself belongs outside the

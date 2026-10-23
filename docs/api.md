@@ -157,6 +157,20 @@ curl -X POST -H 'content-type: application/json' -d '{"ids":["s1"]}' \
 `sessions[]` 的 `home` 是它显示在哪个容器节点里，`homeOverride` 表示这是侧车的虚拟放置而非
 DSH 自己的归属（`lib/index.js:1021`）。两者都由 host 算好，客户端不重放规则。
 
+两个字段不是 DSH 给的，是插件自己从日志两端读出来的（`lib/sources/logfacts.js`）：
+
+| 字段 | 含义 | 从哪来 |
+|---|---|---|
+| `blank` | 从未开始过一轮对话的会话 | 日志第一帧起没有 `turn/start`。DSH 的 projcache 也记这个，但它只覆盖 DSH 自己列过的会话；插件走目录扫描，所以以日志为准，读不到时回落到 projcache，两者都没有就是 `null`（未知，不隐藏） |
+| `interrupted` | 已中断：日志停在一轮对话中间 | 日志最后一个事件不是 `turn/end`。DSH 的 `running` 只存在于内存，进程被杀/窗口关掉后磁盘上什么都不会变，所以这个判断只能由日志给出 |
+
+`interrupted` 与 `running` 可以同时为真（日志还开着、会话也还活着），此时以 `running`
+为准：那是"正在跑"，不是"断了"。`interrupted` 的会话可以删除——它没有活着的进程。
+
+读取成本被两处夹住：`blank` 只在日志较小时读全文（≤256 KB），较大的日志只读头部
+64 KB 的几帧，读不到就报未知而不是报空；`interrupted` 只读尾部 128 KB。两者的结果按
+`path|size|mtime` 缓存，所以只有正在写的那个会话会被重读。
+
 `GET /settings` 单独存在，是因为设置页挂在面板之外，不该为渲染一个表单付一次全量扫描。
 `PUT /settings` 收**局部**文档（`{ shell: { modal: { dim: 0.2 } } }` 合法），未知键被
 `mergeSettings` 丢掉而不是落盘。
@@ -219,6 +233,8 @@ DSH 自己的归属（`lib/index.js:1021`）。两者都由 host 算好，客户
 | `POST /sessions/:id/pin` | — | `{ pinnedSessionIds }` |
 | `POST /sessions/:id/unpin` | — | `{ pinnedSessionIds }` |
 | `POST /sessions/:id/fork` | `{ atSeq?: number }` | `{ sessionId, parentSessionId }` |
+| `POST /sessions/:id/log-path` | — | `{ path, name }` |
+| `POST /sessions/:id/reveal-file` | — | `{ path, opened }` |
 | `POST /move` | `{ ids, target: { workspaceId }, copy? }` | `{ results }` |
 | `POST /trash` | `{ ids }` | `{ trashed, skipped, errors }` |
 | `POST /restore` | `{ ids }` | `{ restored, skipped, errors }` |
@@ -241,6 +257,43 @@ DSH 自己的归属（`lib/index.js:1021`）。两者都由 host 算好，客户
 + 换 registry 登记，三件事一个事务；只有其中一件成功会导致下次启动找不到会话。
 `copy: true` 写第二份独立会话（新 id）而不是移动。有会话在跑时拒绝（`session-active`）——
 DSH 还握着旧路径的写句柄，从底下挪走会损坏尾部。
+
+`POST /sessions/:id/log-path` 是"复制文件路径"：只解析不打开，把会话日志的绝对路径交给面板写剪贴板。
+回收站里的会话也答得出来（走索引），所以它和 `reveal-file` 共用同一套解析、却不碰操作系统。
+
+`POST /sessions/:id/reveal-file` 是"跳转至文件位置"：在资源管理器/Finder 里**选中**该会话的日志文件本身，
+不是它所在的目录。客户端只送 `sessionId`，路径由 host 解析（`sessionLogFile`）：活着的会话取快照里的
+`logPath`，已进回收站的会话取 `<dataDir>/trash/<trashId>/<原文件名>`（回收站索引记着
+`originalLogPath`）。两处都查不到就 `session-not-found`，不做猜测。它和 `POST /reveal-path` 分开，
+是因为后者的白名单只认目录。
+
+Windows 上还多两件事，都是踩过的坑（`lib/host/actions.js`）：
+
+- **分隔符**：`C:/x/y` 交给资源管理器的 `Explore` 找不到窗口，交给 `explorer.exe` 会打开"文档"。
+  所以只在实际调系统时把 `/` 换成 `\`（`nativePath`），返回值仍是调用方给的原样路径。
+- **前台**：窗口"打开了"和"用户看见了"是两件事。脚本会 `ShowWindow`+`SwitchToThisWindow`+
+  `SetForegroundWindow`，再用 `GetForegroundWindow()` 比对句柄，最后输出一个状态词：
+  `opened`（新建并到前台）/ `focused`（复用已有窗口并到前台）/ `behind`（存在但没抢到前台）/
+  `activated`（只能按标题激活，未验证）/ `none`（根本没窗口）。面板按这个词决定提示文案，
+  `behind` 会明说"窗口没有到前台"，不再拿"已打开"糊弄。
+- **为什么不用 `explorer.exe /select,`**：这条路在本机不通——正斜杠被 shell 直接拒绝（`E_INVALIDARG`），
+  而命令行交接走 DDE，DSH 进程是提权的（`WindowsPrincipal.IsInRole(Administrator)` 为真）驱动不了
+  非提权的资源管理器，于是它退回去打开"文档"。原生 API 把这两个坑一起绕开。
+
+**三级顺序**（`lib/host/actions.js` 的 `revealOnWindows`，前一级成功就不再往下走）：
+
+1. **shell API**（首选，`lib/host/native-reveal.js`）：`SHOpenFolderAndSelectItems`（shell32）。这就是
+   资源管理器"在文件夹中显示"和 Electron `shell.showItemInFolder` 用的那个调用——由 shell 自己开窗
+   并置前，实测 42–57 ms（进程内第一次 155 ms），不产生任何外部进程。Node 没有内置 FFI，所以经
+   `koffi`（Node-API 预编译绑定，不需要编译器）调用；绑定缺失、平台不是 Windows、或调用失败时
+   该模块返回 `null`/`{ok:false}`，自动落到下一级——**缺绑定只损失速度，不损失功能**。
+2. **常驻 PowerShell**（`lib/host/reveal-agent.js`）：`Shell.Application.Explore` + 前台验证，冷启动
+   约 1.8 s，之后每次 130–180 ms。只有在第 1 级不可用时才会在面板打开时预热。
+3. **DSH `openWorkspacePath`**：最后兜底。反过来做过（先 DSH），结果是**没有桌面宿主的构建里它会正常
+   resolve 而什么也不做**——面板提示"已打开"，桌面上却没有窗口。DSH 的返回值不能证明窗口出现过。
+
+`POST /sessions/:id/reveal-dir` 是"在文件管理器中显示"：打开会话的工作目录 `cwd`；会话没记过
+`cwd` 时退到日志所在目录。同样只收 `sessionId`，不让调用方自己给路径。
 
 `move` 是**逐条**的：一条搬不动（`session-active`、目标目录被占、payload 中途消失）不会取消
 其余，`results` 里每条是 `{ sessionId, ok, code?, message?, ... }`。两种例外是整单错误：
@@ -278,11 +331,16 @@ DSH 还握着旧路径的写句柄，从底下挪走会损坏尾部。
 |---|---|---|
 | `POST /workspaces/:id/rename` | `{ title }` | `{ workspaceId, title }` |
 | `POST /workspaces/:id/delete` | — | `{ workspaceId, deleted }` |
+| `POST /workspaces/:id/path` | — | `{ path, name }` |
 | `POST /workspaces/:id/reveal` | — | `{ path, opened }` |
 | `POST /reveal-path` | `{ path }` | `{ path, opened }` |
 
 删除 workspace 只删登记：目录和所有会话日志都在，会话回落到未分组（与 DSH 原生删除语义一致）。
 `reveal` 在资源管理器里定位目录；workspace 没有记录路径时 `bad-request`。
+
+`POST /workspaces/:id/path` 是"复制目录地址"：只解析路径、不碰操作系统，和
+`POST /sessions/:id/log-path` 成对——一个给文件，一个给目录。面板因此可以把地址粘到编辑器、
+终端或另一台机器的对话框里，而不必在宿主所在的那台机器上开窗。
 
 `POST /reveal-path` 只接受**本插件已经列出的目录**：某个会话的 `cwd`，或某个 workspace 自己的
 `path`（`lib/index.js` 的 `knownDirectory`）。其他路径一律 `400 path is not a directory this plugin

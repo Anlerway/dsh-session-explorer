@@ -55,5 +55,8 @@
     "@deepseek-ai/cordis": {
       "optional": true
     }
+  },
+  "dependencies": {
+    "koffi": "^3.3.3"
   }
 }

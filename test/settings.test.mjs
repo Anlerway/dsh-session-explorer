@@ -100,23 +100,41 @@ test("a header-style patch merges without disturbing its siblings", () => {  con
   assert.equal(again.shell.header.style, "icon");
 });
 
-test("折叠子智能体 is a closed vocabulary, folded by default", () => {
+test("折叠子智能体 and 过滤空会话 are switches, both on by default", () => {
   // Folded is the default because a child is not a session the user can act on:
   // a run that delegated ten times must not push ten dead rows into the list.
-  assert.equal(defaultSettings().list.subagents, "collapsed");
-  assert.equal(normalizeSettings({}).list.subagents, "collapsed");
-  assert.deepEqual([...SUBAGENT_MODES], ["collapsed", "expanded"]);
-  for (const mode of SUBAGENT_MODES) {
-    assert.equal(normalizeSettings({ list: { subagents: mode } }).list.subagents, mode);
+  assert.equal(defaultSettings().list.collapseSubagents, true);
+  assert.equal(normalizeSettings({}).list.collapseSubagents, true);
+  assert.equal(normalizeSettings({ list: { collapseSubagents: false } }).list.collapseSubagents, false);
+  // A non-boolean is not a choice: it falls back to the default instead of
+  // being coerced, so a hand-edited file cannot invent a third state.
+  for (const bad of ["expanded", 0, 1, null]) {
+    assert.equal(normalizeSettings({ list: { collapseSubagents: bad } }).list.collapseSubagents, true);
   }
-  for (const bad of ["open", "collapsed ", "", true, 0]) {
-    assert.equal(normalizeSettings({ list: { subagents: bad } }).list.subagents, "collapsed");
+  // A document from the picker era stored a mode word; it must not reset the
+  // user's 展开 choice back to folded on upgrade.
+  assert.equal(normalizeSettings({ list: { subagents: "expanded" } }).list.collapseSubagents, false);
+  assert.equal(normalizeSettings({ list: { subagents: "collapsed" } }).list.collapseSubagents, true);
+  // The new switch wins over a stale mode word in the same document.
+  assert.equal(
+    normalizeSettings({ list: { subagents: "collapsed", collapseSubagents: false } }).list.collapseSubagents,
+    false,
+  );
+
+  // 过滤空会话 hides a session that never started a turn; on by default, and
+  // only an explicit `false` turns it off.
+  assert.equal(defaultSettings().list.hideBlank, true);
+  assert.equal(normalizeSettings({}).list.hideBlank, true);
+  assert.equal(normalizeSettings({ list: { hideBlank: false } }).list.hideBlank, false);
+  for (const bad of ["yes", 0, 1, null]) {
+    assert.equal(normalizeSettings({ list: { hideBlank: bad } }).list.hideBlank, true);
   }
+
   // The list group merges as one shallow object, so a later toggle keeps it.
-  const merged = mergeSettings(defaultSettings(), { list: { subagents: "expanded" } });
-  assert.equal(merged.list.subagents, "expanded");
+  const merged = mergeSettings(defaultSettings(), { list: { collapseSubagents: false } });
+  assert.equal(merged.list.collapseSubagents, false);
   assert.equal(merged.list.showArchived, true);
-  assert.equal(mergeSettings(merged, { list: { showArchived: false } }).list.subagents, "expanded");
+  assert.equal(mergeSettings(merged, { list: { showArchived: false } }).list.collapseSubagents, false);
 });
 
 test("sizing modes and presets are closed vocabularies", () => {

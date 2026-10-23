@@ -237,6 +237,38 @@ console.log("SessionRow (trashed) ok:", Boolean(render({
   props: { session: { ...session, trashed: true }, selected: false, now: Date.now(), onSelect: noop, checked: false, onCheck: noop, onBeginRename: noop },
 })));
 
+// 已中断 — a log that ends inside a turn without a process writing it. It is
+// neither 运行中 nor 空闲, and unlike 运行中 it can be deleted, so the row must
+// say so in words rather than only through a dot colour.
+const interruptedRow = render({
+  type: SessionRow,
+  props: {
+    session: { ...session, interrupted: true, running: false },
+    selected: false,
+    now: Date.now(),
+    onSelect: noop,
+    checked: false,
+    onCheck: noop,
+    onBeginRename: noop,
+  },
+});
+console.log("SessionRow (已中断) ok:", textOf(interruptedRow).includes("已中断"));
+// Running wins over interrupted: an open log that belongs to a live session is a
+// turn in progress, not a broken one.
+const runningRow = render({
+  type: SessionRow,
+  props: {
+    session: { ...session, interrupted: true, running: true },
+    selected: false,
+    now: Date.now(),
+    onSelect: noop,
+    checked: false,
+    onCheck: noop,
+    onBeginRename: noop,
+  },
+});
+console.log("SessionRow (运行中 wins) ok:", textOf(runningRow).includes("运行中"));
+
 // ── 子智能体 rows (P32) ─────────────────────────────────────────────────────
 // A child row is not a session the user can act on: it has no checkbox, no
 // rename pencil and no drag handle, and it says so with a bound glyph and a 子
