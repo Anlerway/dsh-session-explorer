@@ -1,7 +1,7 @@
 # HTTP API
 
-所有端点都挂在 `/session-explorer/api` 前缀下，由 `lib/index.js:354` 的 `ROUTES` 表定义，
-`lib/index.js:1189` 的 `handle()` 分发。共 **52 条**。
+所有端点都挂在 `/session-explorer/api` 前缀下，由 `lib/index.js:379` 的 `ROUTES` 表定义，
+`lib/index.js:1529` 的 `handle()` 分发。共 **62 条**。
 
 ## 1. 信封
 
@@ -18,7 +18,7 @@
 - 空 body 解析成 `{}`。
 
 **四条路由不写信封**，它们自己接管响应：`GET /bridge/events`（SSE）、`GET /export`（文件）、
-`GET /ui*`（静态资源）。`handle()` 在 `headersSent` 后不再追加信封（`lib/index.js:1223`）。
+`GET /ui*`（静态资源）。`handle()` 在 `headersSent` 后不再追加信封（`lib/index.js:1563`）。
 
 ## 2. 通用约定
 
@@ -36,12 +36,12 @@
 bad-request`，而不是悄悄当没给——否则一个写错的头会变成"最后写入者赢"。
 
 两者都不给 = 最后写入者赢（单窗口用户的预期）。给了但落后 = `409 revision-conflict`，
-客户端应重新拉取后重试。实现见 `lib/index.js:1057`（读期望值）与 `lib/store/sidecar.js`（比对）。
+客户端应重新拉取后重试。实现见 `lib/index.js:1315`（读期望值）与 `lib/store/sidecar.js`（比对）。
 
 ### 迁移守卫
 
 数据目录迁移期间（`api.migration !== null`），**除 `/datadir*` 之外的所有非 GET/HEAD 请求**
-一律 `409 migration-in-progress`（`lib/index.js:1213`）。否则写入会落进正在被复制的旧目录。
+一律 `409 migration-in-progress`（`lib/index.js:1552`）。否则写入会落进正在被复制的旧目录。
 
 ### id 约定
 
@@ -58,7 +58,7 @@ bad-request`，而不是悄悄当没给——否则一个写错的头会变成"�
 
 ## 3. 错误码 → HTTP 状态
 
-`lib/index.js:1310`。DSH 原生的命名空间码原样透出，不翻译。
+`lib/index.js:1614`。DSH 原生的命名空间码原样透出，不翻译。
 
 | code | 状态 | 含义 |
 |---|---|---|
@@ -72,10 +72,14 @@ bad-request`，而不是悄悄当没给——否则一个写错的头会变成"�
 | `revision-conflict` | 409 | 乐观锁失败 |
 | `datadir-same` / `datadir-not-empty` / `migration-in-progress` | 409 | 数据目录迁移的三种拒绝 |
 | `component-busy` / `component-in-use` | 409 | 组件正在被别的操作占用 / 窗口开着不能删 |
+| `confirm-required` | 400 | 清除数据没拿到 `DELETE`，一个字节都没动（§4.12） |
+| `reset-refused` | 409 | 数据目录不可用（根目录 / `~/.dsh` 或它的祖先），既然是清空就更不能动（§4.12） |
 | `component-disk-full` | 507 | 磁盘不足 |
 | `disk-full` | 507 | 同上的通用码（写文件时 `ENOSPC`） |
 | `io-error` | 500 | 数据目录读不了（`ENOENT`/`EACCES`/`EIO`… 被翻译成这个，不再冒充 `bad-request`） |
 | `move-incomplete` / `move-rollback-failed` | 500 | 跨卷拷贝不完整、回滚没做完——会话**没有**被删，见 `move.js` |
+| `update-unreachable` | 502 | 连不上 GitHub，或答复不是 release JSON（更新检查，见 §4.11） |
+| `open-failed` | 502 | 系统浏览器拉不起来（Star / Issue 链接） |
 | `capability-missing` | 501 | 该 profile 缺这个服务 |
 | `cross-site` | 403 | 跨站写请求（`Sec-Fetch-Site: cross-site`） |
 | `unsupported-media-type` | 415 | 写请求没用 `application/json` |
@@ -105,7 +109,7 @@ curl -X POST -H 'content-type: application/json' -d '{"ids":["s1"]}' \
 
 子智能体是父会话一次委派的产物，DSH 仍然把它写成完整的会话目录，但它不是用户可以
 单独处置的会话。规则集中在 `lib/domain/subagents.js`，路由侧只有一个入口
-`assertStandalone(api, ids)`（`lib/index.js:1131`）：
+`assertStandalone(api, ids)`（`lib/index.js:1253`）：
 
 | 操作 | 子智能体 | 为什么 |
 |---|---|---|
@@ -128,12 +132,12 @@ curl -X POST -H 'content-type: application/json' -d '{"ids":["s1"]}' \
 | 路由 | body / query | 返回 |
 |---|---|---|
 | `GET /bootstrap` | `?refresh=1` 跳过 TTL | 见下 |
-| `GET /settings` | — | `{ settings, revision, capabilities, dataDir }` |
+| `GET /settings` | — | `{ settings, revision, capabilities, dataDir, version }` |
 | `PUT /settings` | 局部设置文档 | `{ settings, revision }` |
 | `GET /theme` | — | `null` 或 `{ mode, tokens, at }` |
 | `POST /theme` | `{ mode?, tokens? }` | 同 `GET /theme` |
 
-`GET /bootstrap`（`lib/index.js:362`）是面板唯一的一次往返，字段：
+`GET /bootstrap`（`lib/index.js:387`）是面板唯一的一次往返，字段：
 
 ```jsonc
 {
@@ -155,7 +159,7 @@ curl -X POST -H 'content-type: application/json' -d '{"ids":["s1"]}' \
 ```
 
 `sessions[]` 的 `home` 是它显示在哪个容器节点里，`homeOverride` 表示这是侧车的虚拟放置而非
-DSH 自己的归属（`lib/index.js:1021`）。两者都由 host 算好，客户端不重放规则。
+DSH 自己的归属（`lib/index.js:1235`）。两者都由 host 算好，客户端不重放规则。
 
 两个字段不是 DSH 给的，是插件自己从日志两端读出来的（`lib/sources/logfacts.js`）：
 
@@ -170,6 +174,8 @@ DSH 自己的归属（`lib/index.js:1021`）。两者都由 host 算好，客户
 读取成本被两处夹住：`blank` 只在日志较小时读全文（≤256 KB），较大的日志只读头部
 64 KB 的几帧，读不到就报未知而不是报空；`interrupted` 只读尾部 128 KB。两者的结果按
 `path|size|mtime` 缓存，所以只有正在写的那个会话会被重读。
+
+更新检查、缓存清理和三个项目链接在设置页的「关于」组里，单独记在 §4.11。
 
 `GET /settings` 单独存在，是因为设置页挂在面板之外，不该为渲染一个表单付一次全量扫描。
 `PUT /settings` 收**局部**文档（`{ shell: { modal: { dim: 0.2 } } }` 合法），未知键被
@@ -394,7 +400,7 @@ status 的形状（`lib/component/manager.js:345`）：
 | `POST /detached/open` | — | `{ open: true, ... }` |
 | `POST /detached/close` | — | `{ closed: boolean }` |
 
-`kind ∈ {open-session, new-session, reveal, refresh, open-settings}`（`lib/host/bridge.js:133`），
+`kind ∈ {open-session, new-session, reveal, refresh, open-settings}`（`lib/host/bridge.js:148`），
 payload 只接受 `sessionId` / `workspaceId` / `scope` 三个字符串字段，各自截断到 200 字符。
 其它 kind 一律 `bad-request`——桥是一根窄管子，不是插件的遥控器。
 
@@ -417,9 +423,92 @@ payload 只接受 `sessionId` / `workspaceId` / `scope` 三个字符串字段，
 | `GET /ui/react.js` | `assets/vendor/react.production.min.js` | `text/javascript` |
 | `GET /ui/react-dom.js` | `assets/vendor/react-dom.production.min.js` | `text/javascript` |
 
-路径是**常量**，不由请求决定读哪个文件，因此没有穿越面（`lib/index.js:78-85`）。
+路径是**常量**，不由请求决定读哪个文件，因此没有穿越面（`lib/index.js:92`）。
 全部 `no-store`：面板和窗口必须跑同一份代码，缓存一份旧的正是这套安排要消除的漂移。
 文件缺失时 `ui-asset-missing`（500）。
+
+### 4.11 关于：更新检查、缓存清理、链接
+
+设置页「关于」组的三条后端（它后面还有一组「危险操作」，另记在 §4.12）。
+
+| 路由 | body / query | 返回 |
+|---|---|---|
+| `GET /update` | `?force=1` 跳过 5 分钟缓存 | `{ current, latest, hasUpdate, url, name, publishedAt, notes, checkedAt }` |
+| `POST /about/open` | `{ target }` | `{ target, url, opened: true }` |
+| `POST /cache/clear` | — | `{ freedBytes, caches, tmp, downloads, staging, skipped, tookMs }` |
+
+`GET /update` 在 host 侧访问 `api.github.com`（`lib/host/update.js`）：客户端是个网页，
+直连会撞 CORS；独立窗口里 `window.open` 又被主进程拒掉，两条路都不通，所以这件事只能
+host 做。仓库地址只在 `lib/constants.js` 的 `REPO_URL` 写一次，API 地址由它拼出来。
+结果缓存 5 分钟：设置页每开一次就问一次 GitHub 的话，未登录的 60 次/小时会很快用完。
+
+`latest` 为 `null` 不是错误——仓库还没有 release，和"连不上"是两回事（后者是
+`502 update-unreachable`）。版本比较只按数字段走：`v1.10.0 > v1.9.0`，`1.0` 与 `1.0.0`
+相等，预发布版低于同号正式版。`current` 读的是 `package.json`，不是第二份写死的数字。
+
+`POST /about/open` 收的是**名字**不是 URL，白名单 `{ repo, star, issues, releases }`
+（`lib/host/open-link.js` 的 `LINK_TARGETS`）。这条 API 没有 token，任何页面都能调；
+如果它接受任意 URL，就等于给每个网页一个"用系统浏览器打开这个地址"的按钮。所以只认
+这四个键，别的（包括 `"https://…"`、`"STAR"`）一律 `bad-request`，且什么都不拉。
+
+打开本身走一条降级链（同一个文件）：Windows 先 `rundll32 url.dll,FileProtocolHandler`，这是
+一次裸 `ShellExecute`，没有控制台宿主、不继承调用方的窗口状态；失败再退回
+`powershell -Command Start-Process`；macOS `open`，Linux `xdg-open` → `gio open`。
+判据是子进程的**退出码**，不是"起来了吗"：只报 spawn 成功的话，一个起得来却打不开任何东西的
+壳子也会被当成成功，用户看到的就是"点了没反应"。全链失败才是 `502 open-failed`，且消息里
+带上那个 URL，面板把它原样显示出来，至少还能复制。
+
+`POST /cache/clear` 只清插件自己的缓存（`lib/host/maintenance.js`）：
+
+- 内存：`reader.invalidate()`、`clearLogFacts()`、各侧车的 `invalidate()`。
+- 磁盘：数据目录的 `.tmp`（`cleanTmp`，被中断的写会被**搬进** `quarantine/` 而不是删掉）、
+  组件的 `download/`（含续传用的 `.part`）与 `.component-staging/`。
+
+组件正在 `downloading / verifying / extracting`，或状态文件读不出来时，后两项跳过，
+`skipped` 里报 `component-busy`——那正是它在用的目录，删一半等于让它下次从断点装坏。
+`quarantine/`（用户自己的坏数据）、DSH 的 `storages/session_projcache` 和会话本身
+**从不**在这里被碰。浏览器缓存也不在其中：面板的 `/ui/*` 一律 `no-store`（§4.10），
+其余页面缓存属于 DSH 自己的渲染进程和独立窗口，不在插件手里。
+
+### 4.12 清除数据
+
+| 路由 | body | 返回 |
+|---|---|---|
+| `POST /data/reset` | `{ confirm: "DELETE" }` | `{ freedBytes, documents, trash, quarantine, tmp, keptLocation, dataDir, tookMs }` |
+
+插件里唯一一个**不可逆**的操作（`lib/host/reset.js`），因此有两道门，且都在 host 侧：
+
+1. `confirm` 去掉首尾空白后必须**恰好**是 `DELETE`（`RESET_CONFIRMATION`），否则
+   `400 confirm-required`——在读到任何文件之前就返回，一个字节都不动。门装在这里而不是
+   只装在页面上，是因为这条路由没有 token：只靠一颗红按钮拦的话，一次 `fetch` 就绕过去了。
+2. `api.dataDir` 必须过 `isUsableDataDir()`（不是文件系统根，不是 `~/.dsh` 也不是它的祖先），
+   否则 `409 reset-refused`。越是要清空一个目录，越要先确认那是它自己的目录。
+
+过了门，它删的是插件自己的记录：
+
+- 四份侧车文档 `tree.v1.json` / `annotations.v1.json` / `settings.v1.json` /
+  `trash/index.v1.json`：文件夹、标签、备注、设置、回收站索引；
+- `trash/` 里的**净内容**。回收站是 move 不是 copy（`lib/host/trash.js`），里面的目录
+  曾经就是 DSH 的会话目录，删掉它们等于把这些会话永久删掉——这就是它必须被 `DELETE` 拦住的原因；
+- `quarantine/`（解析不了的文档，是用户自己的字节）与 `.tmp/`（写了一半的原子写残留）。
+
+它**不动**的东西：
+
+- 数据目录本身和它的三个子目录——清空而不删除，否则插件下次没地方写；
+- DSH 自己的会话库：插件只搬过它们，没造过它们；
+- 浏览器组件（`component/`、`.component-staging/`）：那是一次安装，不是用户数据。
+  要清它按 `POST /cache/clear`（§4.11）。
+
+迁移过的安装（`settings.dataDir.current` 有记录）会在删之前先记下这个路径，删完立刻用一份
+新文档写回去（新文档 revision 从 1 开始），否则下次启动会退回默认目录，面板就指向一个空位置。
+`keptLocation` 是写回去的那个值，没记录时为 `null`。写不回去也不报错：退回默认目录比
+拒绝执行好，那本来就是没迁移过的安装的位置。
+
+清完必须 `invalidateMemory(api)`：面板上每张列表都是 memo 过的，只删文件的话，被删掉的
+文件夹和标签还会从内存里一直答到进程重启为止。
+
+`documents` 每项是 `{ removed, bytes }`。文件被扫描器或索引器占着删不掉时 `removed: false`
+而不是抛错——摘要要描述真实发生的事，`freedBytes` 也只累加真的回来了的字节。
 
 ## 5. 客户端怎么用
 

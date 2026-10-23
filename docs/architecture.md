@@ -90,53 +90,61 @@ handler(api, req, res, query, params)
 
 ```
 lib/
-├─ index.js          1362  插件装配 + 路由表 + 错误映射（唯一编排层）
+├─ index.js          1717  插件装配 + 路由表（62 条）+ 错误映射（唯一编排层）
 ├─ http.js            101  信封、body 解析、URL 切分
-├─ constants.js        30  API_PREFIX / PLUGIN_ID / FIXED_NODES / WORKSPACE_NODE_PREFIX
+├─ constants.js        39  API_PREFIX / PLUGIN_ID / REPO_URL / FIXED_NODES / WORKSPACE_NODE_PREFIX
 ├─ capabilities.js     73  Cordis 服务的防御式探测
 ├─ paths.js           327  数据目录解析、`.location` 指针、原子写临时目录清理
 │
 ├─ sources/                 读 DSH 的数据（只读，除 move 的受控重写）
-│  ├─ heads.js        230  L2：sessions 目录遍历（按实际版本名取最新日志，并发 8，结果排序）
+│  ├─ heads.js        233  L2：sessions 目录遍历（按实际版本名取最新日志，并发 8，结果排序）
 │  ├─ projcache.js    177  L1：storages/session_projcache 的每会话小 JSON
 │  ├─ workspaces.js   127  workspace registry：优先活服务，回退 storages/workspace.json
-│  ├─ artifact.js     214  会话文件路径编码/解码、读日志、重写 header
-│  └─ reader.js       206  三源合并 + TTL 缓存策略（/bootstrap 的数据源）
+│  ├─ logfacts.js     250  日志两端：空白会话 / 已中断（按 path|size|mtime 有界缓存）
+│  ├─ artifact.js     227  会话文件路径编码/解码、读日志、重写 header
+│  └─ reader.js       264  三源合并 + TTL 缓存策略（/bootstrap 的数据源）
 │
 ├─ domain/                  纯规则，无 IO，可直接单测
-│  ├─ sessions.js     267  合并三源 → 扁平会话列表（header 定身份，cache 只填空）
-│  ├─ tree.js         405  树投影：workspace 节点 + 固定节点 + 用户文件夹
-│  ├─ tree-rules.js   437  规则表 R1–R5 的唯一实现（accepts / scope / ref 装饰）
-│  ├─ folders.js      237  新建/重命名/移动/删除文件夹（改 tree draft）
-│  ├─ shortcuts.js    204  快捷方式：引用而非移动
-│  ├─ annotations.js  246  标签、备注、收藏/待办
-│  ├─ settings.js     262  设置文档形状与归一化
+│  ├─ sessions.js     310  合并三源 → 扁平会话列表（header 定身份，cache 只填空）
+│  ├─ tree.js         450  树投影：workspace 节点 + 固定节点 + 用户文件夹
+│  ├─ tree-rules.js   451  规则表 R1–R5 的唯一实现（accepts / scope / ref 装饰）
+│  ├─ folders.js      330  新建/重命名/移动/删除文件夹（改 tree draft）
+│  ├─ shortcuts.js    233  快捷方式：引用而非移动
+│  ├─ annotations.js  276  标签、备注、收藏/待办
+│  ├─ settings.js     315  设置文档形状与归一化
 │  ├─ trash.js        210  回收站条目形状、恢复阶梯
 │  ├─ subagents.js    107  子智能体绑定：isBound / descendantsOf / withDescendants / boundIds
-│  ├─ export.js       236  日志 → Markdown / JSONL（处理 surfaceOp 遮蔽）
-│  └─ session-state.js 40  单个会话的布尔位（给 DSH 自己的按钮用，含 subagent）
+│  ├─ export.js       258  日志 → Markdown / JSONL（处理 surfaceOp 遮蔽）
+│  └─ session-state.js 38  单个会话的布尔位（给 DSH 自己的按钮用，含 subagent）
 │
 ├─ store/                   自己的持久化
 │  ├─ sidecar.js      238  原子写 + revision + 串行化 + mtime/size 缓存
 │  └─ documents.js    130  四份侧车文档的注册表
 │
 ├─ host/                    需要动文件系统或跨进程的操作
-│  ├─ actions.js      302  改名/派生/归档/置顶 → 调 DSH 自己的服务
-│  ├─ trash.js        452  删除/恢复/清空的字节搬运
-│  ├─ move.js         561  跨 workspace 移动/复制（重写 header cwd + 换登记）
+│  ├─ actions.js      697  改名/派生/归档/置顶 → 调 DSH 自己的服务
+│  ├─ trash.js        496  删除/恢复/清空的字节搬运
+│  ├─ move.js         683  跨 workspace 移动/复制（重写 header cwd + 换登记）
+│  ├─ move-journal.js 101  移动的意图日志：崩在两次写之间时，启动收尾而不是留下孤儿
 │  ├─ datadir.js      380  数据目录检查与七步迁移
-│  ├─ bridge.js       155  命令环形缓冲 + 游标
-│  └─ theme.js        103  调色板令牌白名单与校验
+│  ├─ bridge.js       170  命令环形缓冲 + 游标
+│  ├─ theme.js        103  调色板令牌白名单与校验
+│  ├─ native-reveal.js 107 koffi → `SHOpenFolderAndSelectItems`，"在文件夹中显示"
+│  ├─ reveal-agent.js  203 常驻 PowerShell：省掉每次 reveal 一秒多的进程启动
+│  ├─ update.js       210  更新检查：版本比较、GitHub release 解析、5 分钟缓存
+│  ├─ open-link.js    169  链接白名单（repo / star / issues / releases）→ 系统浏览器（带降级链）
+│  ├─ maintenance.js  215  缓存清理：内存三件 + `.tmp` / 下载目录 / staging，跳过在装的组件
+│  └─ reset.js        193  清除数据：四份侧车 + 回收站净内容 + 隔离区 + `.tmp`，`DELETE` 把关
 │
 ├─ component/               可选 Electron 运行时
-│  ├─ layout.js       203  路径、版本、SHA-256、镜像、体积
+│  ├─ layout.js       226  路径、版本、SHA-256、镜像、体积
 │  ├─ state.js        160  state.v1.json 生命周期机
-│  ├─ downloader.js   311  curl 流式下载（断点续传、镜像、进度）
-│  ├─ install.js      363  校验 → 解压 → 原子发布
-│  └─ manager.js      667  单飞状态机（install/cancel/remove 共享一把锁）
+│  ├─ downloader.js   339  curl 流式下载（断点续传、镜像、进度）
+│  ├─ install.js      562  校验 → 解压 → 原子发布
+│  └─ manager.js      688  单飞状态机（install/cancel/remove 共享一把锁）
 │
 ├─ detached/
-│  ├─ launcher.js     360  Host 侧：spawn / 重试 / 聚焦 / 关闭、net 控制通道
+│  ├─ launcher.js     390  Host 侧：spawn / 重试 / 聚焦 / 关闭、net 控制通道
 │  └─ main.cjs        —    跑在 Electron 运行时里，拥有 BrowserWindow
 │
 └─ dsh/
@@ -148,16 +156,58 @@ lib/
 `host` → `domain` + `store`；`domain` 不 import 任何 IO 模块；`sources` 不 import `domain` 的规则
 （只 import 纯合并函数）。`domain/*` 全部是"传入 draft、返回 draft"，所以测试不需要文件系统。
 
+### 4.1 一件只能 host 做的事：更新检查
+
+设置页「关于」组的三个入口里有两个**不能**由客户端完成，这是它们单独放在 `host/` 的原因：
+
+- **更新检查**：客户端是个普通网页，直接问 `api.github.com` 会撞 CORS；独立窗口里
+  `window.open` 与 `fetch` 也被主进程限定。所以由 `host/update.js` 代问、代比较，
+  结果缓存 5 分钟——设置页每打开一次就问一次的话，未登录的 60 次/小时会很快用完。
+- **打开链接**：`host/open-link.js` 用系统浏览器打开，但**只认四个名字**
+  （`repo` / `star` / `issues` / `releases`），不收 URL。这条 API 挂在 DSH 的端口上、没有 token，
+  接受任意 URL 就等于送给每个网页一个"用系统浏览器打开这个地址"的按钮。
+  打开本身按平台走一条降级链（Windows：`rundll32 url.dll,FileProtocolHandler` → `Start-Process`，
+  macOS `open`，Linux `xdg-open` → `gio open`），认的是子进程**退出码**而不是"spawn 成功"——
+  后者会让一个起得来、却打不开任何东西的壳子也报成功，用户看到的就是"点了没反应"；全链失败才
+  报错，且错误消息里带着那个 URL，面板原样显示，至少还能复制。
+
+第三个（缓存清理，`host/maintenance.js`）固然是 host 的活，但它有一条同样值得记住的边界：
+只清**插件自己的**缓存（内存里的三处与 `.tmp` / 下载目录 / staging），`quarantine/` 与
+DSH 自己的 `storages/session_projcache` 一律不碰；组件正在下载/校验/解压时跳过那两项。
+  浏览器缓存也不归它管：面板的 `/ui/*` 本来就不缓存，其余属于 DSH 的渲染进程和独立窗口。
+
+### 4.2 唯一不可逆的操作：清除数据
+
+设置页最后一组（「危险操作」）只有一个按钮，它删的是用户自己的东西：文件夹、标签、备注、设置、
+回收站索引，以及回收站里的**会话目录本体**。回收站是 move 不是 copy（`host/trash.js`），
+那些目录曾经就是 DSH 的会话目录——这一步没有"再点一次还原"可退。
+
+所以判断全在 `host/reset.js`，客户端只把用户打的字原样送上去：
+
+- 字面上的 `DELETE`（去掉首尾空白）是**第一件**检查的事，不是删到一半才检查；
+- `api.dataDir` 必须过 `isUsableDataDir()`——越是要清空一个目录，越要先确认那是它自己的；
+- 它清空的三个目录（`trash/` / `quarantine/` / `.tmp/`）保留目录本身：插件下次还得往里写；
+- 浏览器组件不在其中：那是安装，不是用户数据，它的按钮是清理缓存；
+- 删完立刻 `invalidateMemory(api)`：面板每张列表都是 memo 过的，不抖掉的话，被删掉的文件夹
+  会一直答到进程重启。
+
+页面上的红按钮与输入框只是礼貌。这条路由没有 token，真正的门必须在 host：
+
+```js
+if (typed !== RESET_CONFIRMATION) throw codedError("confirm-required", "…");   // 400，一个字节都没动
+if (!isUsableDataDir(dataDir)) throw codedError("reset-refused", "…");        // 409
+```
+
 ## 5. Client 半体：`apply(ctx)` 注册了什么
 
-`lib/client.js:9043-9210`。`inject = ["slots", "locale", "uiWorkspace"]`（`:9213`）。
+`lib/client.js:10339-10510`。`inject = ["slots", "locale", "uiWorkspace"]`（`:10513`）。
 
 **插槽**（order 决定与 DSH 自带条目的相对位置）：
 
 | 插槽 | id | order | 组件 | 作用 |
 |---|---|---|---|---|
 | `sidebar.footer.action` | `session-explorer-footer` | 40 | `FooterAction` | 侧栏底部入口，开/关浮窗 |
-| `settings.section` | `session-explorer` | 510 | `SettingsSection` | 设置页分组（label 是 thunk，跟随语言） |
+| `settings.section` | `session-explorer` | 510 | `SettingsSection` | 设置页分组（label 是 thunk，跟随语言）；组序 打开方式 → 列表 → 会话界面 → 浮窗 → 浏览器组件 → 数据目录 → 关于 → 危险操作 |
 | `settings.onboarding` | `session-explorer-opener` | 900 | 匿名 | 只为拿到 `openSection` 后立即 `complete()`，不留 UI |
 | `conversation.session.header.actions` | `session-explorer-header` | 60 | `SessionHeaderActions` | 会话标题栏五个按钮（样式跟随设置 `shell.header.style`） |
 | `sidebar.workspaces.session.menu.item` | `session-explorer-rows` | 500 | `SessionMenuItems` | 会话行 "…" 菜单两条 |
@@ -165,16 +215,16 @@ lib/
 **effect**（随插件卸载自动清理）：
 
 - 主题上报：`reportTheme()` + `MutationObserver` 监听 `documentElement` 的
-  `class` / `data-theme` / `style`（`:9063-9076`）；
+  `class` / `data-theme` / `style`（`:10192-10205`）；
 - 桥订阅：`subscribeBridge(...)`，处理 `open-session` / `new-session` / `open-settings` /
-  `reveal` / `window-closed`（`:9078-9135`）；
-- 词典注册：`ctx.locale.register(NS, { zh, en })`（`:9136`）。
+  `reveal` / `window-closed`（`:10207-10264`）；
+- 词典注册：`ctx.locale.register(NS, { zh, en })`（`:10265`）。
 
-**导出**：`apply` / `inject` / `panelStore` / `SettingsSection`（`:9212-9215`）。
+**导出**：`apply` / `inject` / `panelStore` / `SettingsSection`（`:10345-10347`）。
 
-浮窗本体是 `Panel`（`lib/client.js:4316`，单函数约 3200 行，内部按功能分段），
+浮窗本体是 `Panel`（`lib/client.js:4683`，单函数约 4000 行，内部按功能分段），
 它被 portal 到 `<body>` 上的固定层——侧栏有 `overflow: hidden`，原地渲染会被裁掉
-（`lib/client.js:481-486` 的注释）。
+（`lib/client.js:594` 的注释）。
 
 ## 6. 数据流
 

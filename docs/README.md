@@ -8,12 +8,12 @@
 | 文档 | 讲什么 | 什么时候读 |
 |---|---|---|
 | [architecture.md](architecture.md) | 两半结构、一次请求怎么走完、读管道与缓存、硬约束 | 第一次进这个仓库 |
-| [api.md](api.md) | 52 条 HTTP 路由、信封、错误码表、乐观锁 | 改 host 或写客户端调用 |
+| [api.md](api.md) | 62 条 HTTP 路由、信封、错误码表、乐观锁 | 改 host 或写客户端调用 |
 | [data-directory.md](data-directory.md) | 数据目录布局、四份侧车、原子写、回收站、迁移 | 改存储、调试"数据不见了" |
 | [tree-and-placement.md](tree-and-placement.md) | 节点种类、R1–R5、计数、虚拟放置、快捷方式 | 改左侧树或拖拽 |
 | [bridge-and-theme.md](bridge-and-theme.md) | 面板 ↔ 窗口的命令总线、SSE、主题同步 | 改独立窗口或配色 |
 | [component.md](component.md) | 浏览器组件：状态机、镜像、校验、发布、清扫 | 改安装流程 |
-| [testing.md](testing.md) | 十九个测试文件各钉住什么、怎么跑 | 提交之前 |
+| [testing.md](testing.md) | 三十一个测试文件各钉住什么、怎么跑 | 提交之前 |
 
 ## 三条最容易被违反的约定
 
@@ -27,7 +27,7 @@
 
 ```
 lib/
-  index.js            路由表（52 条）、分发、错误映射、启动装配
+  index.js            路由表（62 条）、分发、错误映射、启动装配
   client.js           整个面板与设置页（单文件、无构建）
   http.js             信封与请求体解析
   constants.js        API 前缀、插件 id、固定节点 id
@@ -37,12 +37,14 @@ lib/
                       annotations / settings / trash / export / session-state
   sources/            读管道：heads（zstd 扫描）、projcache、reader、artifact、workspaces
   store/              sidecar（原子写 + revision）、documents（四份文档）
-  host/               actions、trash、move、datadir、bridge、theme
+  host/               actions、trash、move、datadir、bridge、theme、
+                      update（更新检查）、open-link（链接白名单）、maintenance（缓存清理）、
+                      reset（清除数据，唯一不可逆的操作）
   component/          浏览器组件：layout、state、downloader、install、manager
   detached/           Electron helper：launcher、main.cjs、preload.cjs
 assets/detached/      独立窗口的页面：index.html、window.css、shim.js（不自带 UI）
 assets/vendor/        自带 React 18.3.1 UMD 构建（无构建步骤的前提）
-test/                 19 个测试文件 + render-smoke
+test/                 31 个测试文件 + render-smoke
 ```
 
 `client.js` 是**刻意**的单文件：没有构建步骤是这个插件能在 DSH 的模块加载器里直接跑起来的前提。

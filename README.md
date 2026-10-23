@@ -7,7 +7,8 @@
 > 删除到回收站、导出；文件夹可嵌套可拖拽；删除会把 payload 移进真正的回收站，能还原也能清空；
 > 跨 workspace 的剪切/复制/粘贴会换掉 artifact 的归属并同步 registry 记账。
 > workspace、文件夹、会话共用一条置顶带；收藏和待办装的是快捷方式而不是副本；
-> 面板有标签页、可调三栏、行内重命名和命令栏。
+> 面板有标签页、可调三栏、行内重命名和命令栏。设置页结尾两组是「关于」（版本号、检查更新、
+> 清理缓存、Star 与反馈入口）和「危险操作」：清除数据——不可逆，要照字打一遍 DELETE。
 
 ## 两个面，一份 UI
 
@@ -33,7 +34,7 @@ Host 在 DSH 的 web 服务器上注册一个 `/session-explorer/api` 前缀路�
 
 ```
 lib/
-  index.js            路由表（52 条）、分发、错误映射
+  index.js            路由表（62 条）、分发、错误映射
   client.js           整个面板与设置页（单文件、无构建）
   http.js             信封与请求体解析
   constants.js        API 前缀、插件 id、固定节点 id
@@ -43,12 +44,14 @@ lib/
                       annotations / settings / trash / export / session-state
   sources/            读管道：heads（zstd 扫描）、projcache、reader、artifact、workspaces
   store/              sidecar（原子写 + revision）、documents（四份文档）
-  host/               actions、trash、move、datadir、bridge、theme
+  host/               actions、trash、move、datadir、bridge、theme、
+                      update（更新检查）、open-link（链接白名单）、maintenance（缓存清理）、
+                      reset（清除数据，唯一不可逆的操作）
   component/          浏览器组件：layout、state、downloader、install、manager
   detached/           Electron helper：launcher、main.cjs、preload.cjs
 assets/detached/      独立窗口的页面：index.html、window.css、shim.js（不自带 UI）
 assets/vendor/        自带 React 18.3.1 UMD 构建
-test/                 19 个测试文件 + render-smoke
+test/                 31 个测试文件 + render-smoke
 docs/                 开发文档（见下）
 ```
 
@@ -89,7 +92,7 @@ desktop profile 是 Electron 应用组装出来的，`dsh profile` 也重建不�
 | 空会话 | 从未开始过一轮对话的会话被标为空白，默认从列表里过滤掉（设置里可关） |
 | 定位 | 会话详情面板与行菜单都有「复制文件路径」：由 Host 找出日志路径（含回收站里的），写进剪贴板；不弹窗口，跨机器也能用 |
 | 主题 | 不硬编码颜色，全部用 `--dsw-alias-*`；独立窗口由面板把 14 个 token 报给 Host 再取用 |
-| 设置 | 浮窗/独立弹窗、尺寸、遮罩、会话界面按钮样式（自动/仅图标）、自动折叠、显示已归档、折叠子智能体（开关）、过滤空会话（开关）、数据目录迁移、组件管理 |
+| 设置 | 浮窗/独立弹窗、尺寸、遮罩、会话界面按钮样式（自动/仅图标）、自动折叠、显示已归档、折叠子智能体（开关）、过滤空会话（开关）、数据目录迁移、组件管理、关于（版本、检查更新、清理缓存、Star、反馈）、危险操作（清除数据，不可逆，需键入 DELETE） |
 
 ## 开发文档
 
@@ -97,12 +100,12 @@ desktop profile 是 Electron 应用组装出来的，`dsh profile` 也重建不�
 |---|---|
 | [docs/README.md](docs/README.md) | 文档索引 + 三条最容易被违反的约定 |
 | [docs/architecture.md](docs/architecture.md) | 两半结构、一次请求怎么走完、读管道与缓存 |
-| [docs/api.md](docs/api.md) | 52 条路由、信封、错误码表、乐观锁 |
+| [docs/api.md](docs/api.md) | 62 条路由、信封、错误码表、乐观锁 |
 | [docs/data-directory.md](docs/data-directory.md) | 数据目录、四份侧车、回收站、迁移 |
 | [docs/tree-and-placement.md](docs/tree-and-placement.md) | 节点种类、R1–R5、计数、快捷方式 |
 | [docs/bridge-and-theme.md](docs/bridge-and-theme.md) | 命令总线、SSE、主题同步 |
 | [docs/component.md](docs/component.md) | 浏览器组件的状态机与安装流程 |
-| [docs/testing.md](docs/testing.md) | 十九个测试文件各钉住什么 |
+| [docs/testing.md](docs/testing.md) | 三十一个测试文件各钉住什么 |
 
 ## 测试
 

@@ -175,14 +175,24 @@ function settingsDocument(mode, component) {
     revision: 4,
     capabilities: { component },
     dataDir: "C:/data",
+    // The build number rides along with the document so the 关于 group can print
+    // it without a request of its own.
+    version: "1.0.0",
   };
 }
 
 /** One render of the page, through the driver so its hooks get a stable scope. */
 const page = (driver, api, t) => driver.render(driver.React.createElement(api.SettingsSection, { t }));
 
+/** The real `t` replaces `{name}` placeholders. Tests usually match on the bare
+ *  key, so interpolation is opt-in — but a case that asserts on a number needs it,
+ *  and the key is kept in front of the text so both assertions still work. */
+const interpolating = (key, vars = {}) =>
+  key.replace(/\{(\w+)\}/g, (whole, name) => (name in vars ? String(vars[name]) : whole)) +
+  (Object.keys(vars).length ? `(${Object.values(vars).join(", ")})` : "");
+
 /** Render the page against a document, and hand back the tree and the calls. */
-async function renderSettings({ mode = "panel", component = "absent" } = {}) {
+async function renderSettings({ mode = "panel", component = "absent", update = null, clear = null, interpolate = false } = {}) {
   const fetchImpl = recordingFetch((call) => {
     const path = call.url.replace(/^.*?\/api/, "");
     if (path === "/settings" && call.method === "GET") {
@@ -201,11 +211,45 @@ async function renderSettings({ mode = "panel", component = "absent" } = {}) {
     if (path === "/component/status") {
       return { ok: true, result: { phase: component, version: "1.0.0", installed: component === "ready" } };
     }
+    // 关于: the update check, the cache clear and the link opener are the only
+    // routes on this page that do something irreversible-ish, so the stub
+    // answers each one explicitly instead of with a bare {}.
+    if (path.startsWith("/update")) {
+      return update
+        ? { ok: true, result: update }
+        : { ok: false, code: "update-unreachable", error: "GitHub is not reachable" };
+    }
+    if (path === "/cache/clear") {
+      return {
+        ok: true,
+        result: clear ?? { freedBytes: 0, caches: [], tmp: { removed: 0, bytes: 0 }, downloads: { removed: 0, bytes: 0 }, staging: { removed: 0, bytes: 0 }, skipped: [], tookMs: 1 },
+      };
+    }
+    if (path === "/about/open") {
+      return { ok: true, result: { target: call.body?.target ?? "", url: "", opened: true } };
+    }
+    // 清除数据: the stub answers with the summary a real host returns, so the
+    // page's "freed N" line has something to print.
+    if (path === "/data/reset") {
+      return {
+        ok: true,
+        result: {
+          freedBytes: 2048,
+          documents: { tree: { removed: true, bytes: 1024 }, settings: { removed: true, bytes: 1024 } },
+          trash: { removed: 2, bytes: 0 },
+          quarantine: { removed: 0, bytes: 0 },
+          tmp: { removed: 0, bytes: 0 },
+          keptLocation: null,
+          dataDir: "C:/data",
+          tookMs: 3,
+        },
+      };
+    }
     return { ok: true, result: {} };
   });
   const driver = makeReact();
   const { test: api } = loadClientBundle({ fetch: fetchImpl, expose: EXPOSE, react: driver.React });
-  const t = (key) => key;
+  const t = (key, vars) => (interpolate ? interpolating(key, vars) : key);
   const tree = await driver.settle(() => page(driver, api, t));
   return { tree, calls: fetchImpl.calls, driver, api, t };
 }
@@ -283,3 +327,250 @@ test("会话界面 offers 自动 and 仅显示图标, and saves the pick alone",
   const afterChips = collect(afterHeader, byClass("se-set-chip"));
   assert.match(afterChips[1].props.className, /\bon\b/, "仅显示图标 is now the chosen chip");
 });
+
+/** The 关于 group. It is no longer the last one on the page — 危险操作 follows it,
+ *  because the only irreversible control must not sit above anything — so find
+ *  it by its heading instead of by position. */
+const aboutGroup = (tree) => collect(tree, byClass("se-set-grp")).find((group) => textOf(group).includes("setGroupAbout"));
+
+const chipLabelled = (tree, key) => collect(tree, byClass("se-set-chip")).find((chip) => textOf(chip) === key);
+
+test("关于 prints the build it is running", async () => {
+  const { tree } = await renderSettings();
+  const about = aboutGroup(tree);
+  assert.match(textOf(about), /setGroupAbout/);
+  assert.equal(textOf(collect(about, byClass("se-set-ver"))[0]), "v1.0.0");
+  // Four things to press, in the order the group explains them: the check, the
+  // clear, and the two pages the project lives on.
+  assert.deepEqual(
+    collect(about, byClass("se-set-chip")).map(textOf),
+    ["setCheckUpdate", "setCacheGo", "setStarGo", "setIssueGo"],
+  );
+  // Nothing is asked of GitHub until the user presses the button: a settings
+  // page that phones home on open is a settings page people remove.
+  assert.equal(collect(about, byClass("se-set-err")).length, 0);
+});
+
+test("检查更新 asks the host once and reports the newer release", async () => {
+  const { tree, calls, driver, api, t } = await renderSettings({
+    update: {
+      current: "1.0.0",
+      latest: "1.0.1",
+      hasUpdate: true,
+      url: "https://github.com/Anlerway/dsh-session-explorer/releases",
+      name: "1.0.1",
+      publishedAt: null,
+      notes: "",
+      checkedAt: 0,
+    },
+  });
+  chipLabelled(tree, "setCheckUpdate").props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const asked = calls.find((call) => call.method === "GET" && /\/update/.test(call.url));
+  assert.ok(asked, "the check is a host request — api.github.com sends no CORS headers");
+  // The first press uses the short-lived cache; only a second press forces.
+  assert.doesNotMatch(asked.url, /force=1/);
+
+  const after = await driver.settle(() => page(driver, api, t));
+  assert.match(textOf(aboutGroup(after)), /setUpdateAvailable/);
+
+  chipLabelled(after, "setDownload").props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const opened = calls.find((call) => call.method === "POST" && call.url.endsWith("/about/open"));
+  assert.ok(opened, "the browser is opened by the host, not by the page");
+  // A named target, never a URL: the host owns the allowlist.
+  assert.deepEqual(opened.body, { target: "releases" });
+});
+
+test("a second press of 检查更新 bypasses the cached answer", async () => {
+  const { tree, calls, driver, api, t } = await renderSettings({
+    update: { current: "1.0.0", latest: "1.0.0", hasUpdate: false, url: "", name: "", publishedAt: null, notes: "", checkedAt: 0 },
+  });
+  chipLabelled(tree, "setCheckUpdate").props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const after = await driver.settle(() => page(driver, api, t));
+  assert.match(textOf(aboutGroup(after)), /setUpdateLatest/);
+
+  chipLabelled(after, "setCheckUpdate").props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const checks = calls.filter((call) => call.method === "GET" && /\/update/.test(call.url));
+  assert.equal(checks.length, 2);
+  assert.match(checks[1].url, /force=1/);
+});
+
+test("a failed 检查更新 says so instead of claiming the build is current", async () => {
+  const { tree, driver, api, t } = await renderSettings();
+  chipLabelled(tree, "setCheckUpdate").props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const after = await driver.settle(() => page(driver, api, t));
+  const text = textOf(aboutGroup(after));
+  assert.match(text, /setUpdateFailed/);
+  assert.doesNotMatch(text, /setUpdateLatest/);
+});
+
+test("清理缓存 reports what came back, and skips a download in flight", async () => {
+  const { tree, calls, driver, api, t } = await renderSettings({
+    clear: {
+      freedBytes: 1_500_000,
+      caches: ["sessions", "log-facts"],
+      tmp: { removed: 2, bytes: 1_500_000 },
+      downloads: { removed: 0, bytes: 0 },
+      staging: { removed: 0, bytes: 0 },
+      skipped: ["component-busy"],
+      tookMs: 4,
+    },
+  });
+  chipLabelled(tree, "setCacheGo").props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const cleared = calls.find((call) => call.method === "POST" && call.url.endsWith("/cache/clear"));
+  assert.ok(cleared);
+  // No revision is cited: a clear must not 409 because another window toggled a
+  // switch while this page was open.
+  assert.equal(cleared.headers["if-match"], undefined);
+
+  const after = await driver.settle(() => page(driver, api, t));
+  const text = textOf(aboutGroup(after));
+  assert.match(text, /setCacheFreed/);
+  assert.match(text, /setCacheSkipped/, "a busy component's download directory is skipped, not deleted");
+});
+
+test("Star opens the repository through the host", async () => {
+  const { tree, calls } = await renderSettings();
+  chipLabelled(tree, "setStarGo").props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const opened = calls.find((call) => call.method === "POST" && call.url.endsWith("/about/open"));
+  assert.ok(opened);
+  assert.deepEqual(opened.body, { target: "star" });
+});
+
+/** The 危险操作 group, found by its heading. */
+const dangerGroup = (tree) => collect(tree, byClass("se-set-grp")).find((group) => textOf(group).includes("setGroupDanger"));
+
+const dangerChip = (tree, key) => collect(dangerGroup(tree), byClass("se-set-chip")).find((chip) => textOf(chip) === key);
+
+/** Open the group and type into its box, settling after each step the way a user
+ *  would: the page re-renders between keystrokes. */
+async function typeConfirmation({ driver, api, t }, text) {
+  const after = await driver.settle(() => page(driver, api, t));
+  const input = collect(dangerGroup(after), byClass("se-set-input"))[0];
+  assert.ok(input, "the confirmation box is open");
+  input.props.onChange({ target: { value: text } });
+  return driver.settle(() => page(driver, api, t));
+}
+
+test("清除数据 sits last, behind its own heading, and asks nothing until pressed", async () => {
+  const { tree } = await renderSettings();
+  const groups = collect(tree, byClass("se-set-grp"));
+  assert.equal(groups[groups.length - 1], dangerGroup(tree), "the irreversible group is the last one on the page");
+  // Closed by default: one row, one button, and no text box to type into.
+  assert.equal(collect(dangerGroup(tree), byClass("se-set-input")).length, 0);
+  assert.deepEqual(collect(dangerGroup(tree), byClass("se-set-chip")).map(textOf), ["setResetGo"]);
+  assert.match(collect(dangerGroup(tree), byClass("se-set-hint"))[0] ? textOf(collect(dangerGroup(tree), byClass("se-set-hint"))[0]) : "", /setResetHint/);
+});
+
+test("the red button stays asleep until DELETE is typed exactly", async () => {
+  const ctx = await renderSettings();
+  const { tree, driver, api, t } = ctx;
+  dangerChip(tree, "setResetGo").props.onClick();
+
+  let after = await driver.settle(() => page(driver, api, t));
+  const input = collect(dangerGroup(after), byClass("se-set-input"))[0];
+  assert.ok(input, "pressing 清除数据… opens the box");
+  assert.equal(input.props.placeholder, "setResetPlaceholder");
+
+  const asleep = () => dangerChip(after, "setResetConfirm");
+  assert.equal(asleep().props.disabled, true, "an empty box cannot delete anything");
+
+  // A near miss is not a confirmation: the host compares the same string, so the
+  // page must not light up for anything it would then have to refuse.
+  after = await typeConfirmation(ctx, "delete");
+  assert.equal(dangerChip(after, "setResetConfirm").props.disabled, true, "lower case is a near miss");
+
+  after = await typeConfirmation(ctx, "DELETE please");
+  assert.equal(dangerChip(after, "setResetConfirm").props.disabled, true, "extra words are a near miss");
+
+  after = await typeConfirmation(ctx, "  DELETE  ");
+  const ready = dangerChip(after, "setResetConfirm");
+  assert.equal(ready.props.disabled, false, "surrounding spaces are trimmed on both sides");
+  assert.match(ready.props.className, /\bdanger\b/);
+  assert.match(ready.props.className, /\bon\b/, "the armed button is visibly the red one");
+
+  // Nothing was sent while the box was being typed into.
+  assert.equal(ctx.calls.filter((call) => call.url.endsWith("/data/reset")).length, 0);
+});
+
+test("确认清除 posts the typed word and reports what it freed", async () => {
+  const ctx = await renderSettings({ interpolate: true });
+  const { tree, driver, api, t } = ctx;
+  dangerChip(tree, "setResetGo").props.onClick();
+  await driver.settle(() => page(driver, api, t));
+  let after = await typeConfirmation(ctx, "DELETE");
+
+  dangerChip(after, "setResetConfirm").props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const sent = ctx.calls.find((call) => call.method === "POST" && call.url.endsWith("/data/reset"));
+  assert.ok(sent, "the reset goes to the host");
+  assert.deepEqual(sent.body, { confirm: "DELETE" });
+  // No revision is cited: the document the page read is the one being deleted,
+  // so an If-Match would turn the last step into a 409.
+  assert.equal(sent.headers["if-match"], undefined);
+
+  after = await driver.settle(() => page(driver, api, t));
+  const done = collect(dangerGroup(after), byClass("se-set-note")).map(textOf).join("");
+  assert.match(done, /setResetDone/);
+  assert.match(done, /2\.0 KB|2 KB|2048/, "the freed size is printed, not just 'done'");
+  // The page re-read the document it just deleted, so the controls above are the
+  // defaults on disk rather than the values it had been showing.
+  assert.ok(ctx.calls.filter((call) => call.method === "GET" && call.url.endsWith("/settings")).length >= 2);
+  // And the box is closed again, so a second press takes the same two steps.
+  assert.equal(collect(dangerGroup(after), byClass("se-set-input")).length, 0);
+});
+
+test("取消 closes the box without asking the host anything", async () => {
+  const ctx = await renderSettings();
+  const { tree, driver, api, t } = ctx;
+  dangerChip(tree, "setResetGo").props.onClick();
+  let after = await driver.settle(() => page(driver, api, t));
+  after = await typeConfirmation(ctx, "DELETE");
+
+  dangerChip(after, "setResetCancel").props.onClick();
+  after = await driver.settle(() => page(driver, api, t));
+
+  assert.equal(collect(dangerGroup(after), byClass("se-set-input")).length, 0);
+  assert.equal(ctx.calls.filter((call) => call.url.endsWith("/data/reset")).length, 0);
+  // Re-opening starts from an empty box: the word is not remembered between tries.
+  dangerChip(after, "setResetGo").props.onClick();
+  after = await driver.settle(() => page(driver, api, t));
+  assert.equal(collect(dangerGroup(after), byClass("se-set-input"))[0].props.value, "");
+});
+
+test("a refused reset shows the host's reason and keeps the box open", async () => {
+  const fetchImpl = recordingFetch((call) => {
+    const path = call.url.replace(/^.*?\/api/, "");
+    if (path === "/settings" && call.method === "GET") return { ok: true, result: settingsDocument("panel", "absent") };
+    if (path === "/data/reset") return { ok: false, code: "confirm-required", error: "type DELETE to confirm; nothing was deleted" };
+    return { ok: true, result: {} };
+  });
+  const driver = makeReact();
+  const { test: api } = loadClientBundle({ fetch: fetchImpl, expose: EXPOSE, react: driver.React });
+  const t = (key, vars) => interpolating(key, vars);
+  const ctx = { driver, api, t };
+  const tree = await driver.settle(() => page(driver, api, t));
+
+  dangerChip(tree, "setResetGo").props.onClick();
+  await driver.settle(() => page(driver, api, t));
+  let after = await typeConfirmation(ctx, "DELETE");
+  dangerChip(after, "setResetConfirm").props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  after = await driver.settle(() => page(driver, api, t));
+  const failure = collect(dangerGroup(after), byClass("se-set-err")).map(textOf).join("");
+  assert.match(failure, /setResetFailed/);
+  assert.match(failure, /type DELETE to confirm/, "the host's sentence is shown, not swallowed");
+  assert.equal(collect(dangerGroup(after), byClass("se-set-input")).length, 1, "the box stays open so the user can fix the word");
+});
+
+

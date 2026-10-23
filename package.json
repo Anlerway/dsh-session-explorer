@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-explorer",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "会话资源管理器 (Session resource manager) for DeepSeek Harness: virtual folders, tags, notes, trash and multi-workspace session browsing on top of the native DSH session store.",
   "type": "module",
   "engines": {
