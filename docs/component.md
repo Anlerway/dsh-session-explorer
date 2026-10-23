@@ -19,7 +19,7 @@
 <dataDir>/component/
 ├── state.v1.json              生命周期记录
 ├── manifest.v1.json           装了什么、什么时候、从哪来
-├── pending-cleanup.v1.json    卸不掉的路径，下次启动再扫
+├── pending-cleanup.v1.json    删不掉的路径（少见），下次启动再扫
 ├── download/<asset>.part      可续传的下载体
 ├── download/<asset>.part.json { url, etag, received, totalBytes }
 └── runtime-<stamp>/           一次安装一个**不可变**的运行时
@@ -89,7 +89,7 @@ staging 目录故意放在 `component/` **外面**（`<dataDir>/.component-stagi
 | 2 | 磁盘检查 | 需要 `downloadBytes × 2.2 + 500 MB` 空闲，不够就 `component-disk-full`（507） |
 | 3 | `downloading` | 依次试镜像，`AbortController` + 1 小时超时（`INSTALL_TIMEOUT_MS`） |
 | 4 | `verifying` | `verifyZip()` 比对固定 SHA-256 |
-| 5 | `extracting` | 先清空 staging（上一次中断可能留着锁住的 bundle），再解压；解压后必须能找到可执行文件，否则 `component-extract-failed`。解压子进程接同一个 `AbortSignal`，超时/取消会 `SIGKILL` 它，而不是让 `tar` 在后台继续写 |
+| 5 | `extracting` | 先清空 staging（上次中断的残留），再解压——`tar` 用 `--exclude`、`unzip` 用 `-x` 跳过 `resources/default_app.asar`，`Expand-Archive` 没有排除开关，由 `dropExcluded` 用子进程事后删；最后写 helper 自己的 `resources/app`。之后必须能找到可执行文件，否则 `component-extract-failed`。解压子进程接同一个 `AbortSignal`，超时/取消会 `SIGKILL` 它，而不是让 `tar` 在后台继续写 |
 | 6 | 发布 | `publishRuntime()` 到 `runtime-<stamp>`，写 `manifest.v1.json`，删 `.part` 与 `.part.json` |
 | 7 | 扫旧 | `sweepRuntimes()` 删旧运行时；删不掉的进 `pending-cleanup.v1.json` |
 | 8 | `ready` | `receivedBytes: 0`，`source` 记录来源 |
@@ -102,25 +102,27 @@ staging 目录故意放在 `component/` **外面**（`<dataDir>/.component-stagi
 再 0.5 秒后还在就 `SIGKILL`，最后用 `exitCode !== null` 判断（`lib/detached/launcher.js:318-345`）。
 以前它无条件返回 `true`，于是一个不理会退出信号的窗口会让 `remove` 删掉它正在用的可执行文件。
 
-## 5. 卸不掉的 111 KB
+## 5. 那个删不掉的 111 KB：已经不存在了
 
-`resources/default_app.asar` 是每个官方 Electron zip 都带的 111 KB 应用包，本插件从不使用它
-（helper 是用显式 `main.cjs` 启动的）。但一旦被加载过，Windows 会把这个句柄留到进程结束——
-重试多少次都没用。
+`resources/default_app.asar` 是每个官方 Electron zip 都带的 111 KB 应用包，唯一作用是"把命令行上
+那个脚本跑起来"——本插件从来不用它。它曾经是运行时里**唯一删不掉的字节**：Electron 的 `node:fs`
+把任何以 `.asar` 结尾的路径交给 asar 层，**连一次 `stat` 都会**打开文件，并把句柄缓存在进程里直到
+进程退出；Windows 上 `rm` 遇到这种文件还会先读出来复制再删原文件，于是稳定 `EBUSY`。也就是说，
+只要 DSH 读过一次组件状态（`directorySize()` 会 stat 每个文件），那个句柄就再也不会松开。
 
-所以 `removeTree()` 是**尽力而为**的（`lib/component/install.js:220`）：
+现在两边都堵住了：
 
-1. 先对 `EBUSY` / `EPERM` / `EACCES` / `ENOTEMPTY` 重试几次——Defender 扫描、索引器、没退干净的
-   helper 都属于"暂时"；
-2. 剩下的整棵树照删，只留下那个已知无用的 bundle，并告诉调用者哪些路径活了下来。
+1. **不装它**。`extractZip()` 给 `tar` 传 `--exclude resources/default_app.asar`，给 `unzip` 传
+   `-x`；PowerShell 的 `Expand-Archive` 没有排除开关，解压后再用子进程 `del` 兜一次
+   （`dropExcluded`）。用子进程是刻意的：它没有 asar 层。
+2. **不碰它**。安装时写自己的两文件应用 `resources/app`（`installHelperApp`），Electron 启动时
+   优先用它；`directorySize()` 跳过 `.asar`；删整棵树也交给子进程 `rmdir /s /q`
+   （`removeTreeWithRmdir`）。DSH 进程里从头到尾没有一次 fs 调用落到 `.asar` 上。
 
-为一个 111 KB 的文件让用户重下 150 MB 不值得。留下的路径写进 `pending-cleanup.v1.json`，
-**下次启动**（持有句柄的进程正是启动的这个）再扫一遍，仍删不掉的留到再下次。
-`status()` 里的 `pendingCleanup` 就是给设置页解释"磁盘占用为什么对不上"用的。
-
-这份 JSON 是纯磁盘文件，可以被改坏或手改，而扫描会 `removeTree` 递归删除。所以读取时只接受
-`component/` 之内的路径（`lib/component/manager.js` 的 `readPending` + `lib/paths.js` 的
-`isInside`），越界条目直接丢弃——坏文件不能让启动清理变成删任意目录。
+旧版本装下的运行时里还有这个文件——它还在，但**现在谁都不打开它**，所以卸载时能正常删掉；
+`isKnownUnremovable` 只作为兜底留着。`pending-cleanup.v1.json` 因此只剩"扫描器/索引器临时占用"
+这一种来源，下次启动再扫一遍即可（仍是纯磁盘 JSON，读取时只接受 `component/` 之内的路径——
+`readPending` + `lib/paths.js` 的 `isInside`，坏文件不能让启动清理变成删任意目录）。
 
 ## 6. 窗口怎么起来
 
@@ -136,6 +138,26 @@ staging 目录故意放在 `component/` **外面**（`<dataDir>/.component-stagi
 一次安装发布之后那个路径根本不存在。把默认值交给 launcher 会 spawn 一个不存在的路径，
 而失败表现为"窗口永远打不开"——子进程在能报告任何东西之前就退出了。
 
+**启动命令行里不再带脚本路径。** `electron.exe <script>` 这种模式是 `default_app.asar` 提供的，
+而这个文件已经不装了（§5）。所以安装写的是一个两文件应用 `resources/app`：
+
+| 文件 | 内容 |
+|---|---|
+| `resources/app/package.json` | `{"name": "dsh-session-explorer-helper", "main": "main.cjs"}` |
+| `resources/app/main.cjs` | `require` 仓库里的 `lib/detached/main.cjs`，**绝对路径** |
+
+Electron 在没有命令行路径时去 `resources/app` 找应用，而且它**优先于** `default_app.asar`——
+所以同一行命令既服务新运行时，也服务旧版本装下的（还带着 bundle 的）运行时。
+staging 里就把 app 写好，跟着树一起 rename 发布；每次 `launch()` 会再刷一遍，于是升级前的
+运行时也不用重下。入口路径走 `DSH_SE_HELPER_MAIN` 环境变量，不拼进 `package.json`。
+
+绝对路径是必须的：shim 在 `resources/app/` 里，`require("./main.cjs")` 会解析到它自己。
+同理不能把绝对 `main.cjs` 交给 `package.json`——`main` 会在 app 目录里解析
+（`ERROR: File "…\\lib\\detached\\main.cjs" ("main.mjs") not found`），这也是那个 shim 存在的原因。
+
+还有一处必须显式清掉的环境变量：DSH 桌面版自己是带着 `ELECTRON_RUN_AS_NODE=1` 跑的，子进程会
+继承它，于是"窗口"变成一个跑完就退的纯 Node 进程。`launch()` 里 `delete env.ELECTRON_RUN_AS_NODE`。
+
 窗口通过 `onEvent` 把 `hello` / `closed` 报告给 host，host 再转成总线上的 `window-open` /
 `window-closed`（`lib/index.js:157-158`）。窗口的 OS 层面知识只有那个进程有，走同一条总线意味着
 面板不需要第二条通道。
@@ -147,8 +169,8 @@ staging 目录故意放在 `component/` **外面**（`<dataDir>/.component-stagi
 | `lib/component/layout.js` | 版本、固定哈希、镜像、路径表、体积常量 |
 | `lib/component/state.js` | phase 集合、state 的读写与归一化、进度写入节流 |
 | `lib/component/downloader.js` | curl 下载、续传、镜像切换、进度轮询 |
-| `lib/component/install.js` | `verifyZip` / `extractZip` / `publishRuntime` / `removeTree` / `freeBytes` |
+| `lib/component/install.js` | `verifyZip` / `extractZip` / `installHelperApp` / `publishRuntime` / `removeTree` / `freeBytes` |
 | `lib/component/manager.js` | 单飞状态机、`status()`、`install` / `cancel` / `remove` / `retry`、pending 清扫 |
-| `lib/detached/launcher.js` | spawn / 聚焦 / 关闭 |
+| `lib/detached/launcher.js` | spawn / 聚焦 / 关闭；spawn 前刷 `resources/app` |
 | `lib/detached/main.cjs` | Electron 窗口 |
 | `lib/detached/preload.cjs` | 预加载注入 |

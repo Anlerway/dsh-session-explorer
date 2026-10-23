@@ -14,6 +14,7 @@
  *   - an interrupted install leaving a previous runtime untouched.
  */
 
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -24,7 +25,16 @@ import { join } from "node:path";
 
 import { ELECTRON_VERSION, componentPaths, runtimePaths } from "../lib/component/layout.js";
 import { downloadAsset } from "../lib/component/downloader.js";
-import { sameDigest, sha256File, publishRuntime, removeTree, verifyZip } from "../lib/component/install.js";
+import {
+  directorySize,
+  extractZip,
+  installHelperApp,
+  sameDigest,
+  sha256File,
+  publishRuntime,
+  removeTree,
+  verifyZip,
+} from "../lib/component/install.js";
 import { emptyState, normalizeState, readState, writeState, createProgressWriter } from "../lib/component/state.js";
 import { createComponentManager } from "../lib/component/manager.js";
 
@@ -261,6 +271,98 @@ test("publishRuntime keeps the previous runtime when the new one is staged", asy
     // together rather than in two observable steps.
     assert.equal(existsSync(marker), true);
     assert.equal(existsSync(staging), false);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+// ── what Windows will not let go of ─────────────────────────────────────────
+
+test("installHelperApp writes an app Electron prefers over the bundled one", async () => {
+  const box = await sandbox();
+  try {
+    const runtime = join(box.root, "runtime-k3f9");
+    await mkdir(join(runtime, "resources"), { recursive: true });
+
+    const dir = await installHelperApp(runtime);
+    assert.equal(dir, join(runtime, "resources", "app"));
+
+    const manifest = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
+    // `main` has to stay inside the app directory: Electron resolves an absolute
+    // value against that directory and refuses to start if it lands elsewhere.
+    assert.equal(manifest.main, "index.js");
+    assert.ok(manifest.name);
+
+    // The plugin's own entry point comes from the environment, so a runtime
+    // extracted by any version of the plugin runs the code that is installed now.
+    const entry = await readFile(join(dir, "index.js"), "utf8");
+    assert.match(entry, /process\.env\.DSH_SE_HELPER_MAIN/);
+    assert.match(entry, /require\(main\)/);
+
+    // Idempotent: launching refreshes an existing app instead of failing on it.
+    await writeFile(join(dir, "index.js"), "stale", "utf8");
+    await installHelperApp(runtime);
+    assert.match(await readFile(join(dir, "index.js"), "utf8"), /DSH_SE_HELPER_MAIN/);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("directorySize never stats an asar bundle", async () => {
+  const box = await sandbox();
+  try {
+    const runtime = join(box.root, "runtime");
+    await mkdir(join(runtime, "resources"), { recursive: true });
+    await writeFile(join(runtime, "electron.exe"), Buffer.alloc(100, 1));
+    // The real one is 111 073 bytes. Electron's fs hands any `.asar` path to its
+    // asar layer, which opens the file and caches the handle for the life of the
+    // process — so even a size check is enough to make it undeletable.
+    await writeFile(join(runtime, "resources", "default_app.asar"), Buffer.alloc(111073, 1));
+
+    assert.equal(await directorySize(runtime), 100);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("extractZip leaves Electron's default app behind", { skip: process.platform !== "win32" }, async () => {
+  const box = await sandbox();
+  try {
+    // A miniature of the official zip, laid out the same way. bsdtar can write
+    // zips, so the fixture needs no bundled binary.
+    const src = join(box.root, "src");
+    await mkdir(join(src, "resources"), { recursive: true });
+    await writeFile(join(src, "electron.exe"), "MZ");
+    await writeFile(join(src, "resources", "default_app.asar"), "bundle");
+    await writeFile(join(src, "resources", "keep.txt"), "keep");
+    const zip = join(box.root, "runtime.zip");
+    const bsdtar = join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
+    const made = spawnSync(bsdtar, ["-a", "-cf", zip, "-C", src, "."], { stdio: "ignore" });
+    assert.equal(made.status, 0, `could not build the fixture: ${made.error?.message ?? "tar failed"}`);
+
+    const dest = join(box.root, "out");
+    await extractZip(zip, dest);
+
+    assert.equal(existsSync(join(dest, "electron.exe")), true);
+    assert.equal(existsSync(join(dest, "resources", "keep.txt")), true);
+    assert.equal(existsSync(join(dest, "resources", "default_app.asar")), false);
+  } finally {
+    await box.cleanup();
+  }
+});
+
+test("removeTree deletes a runtime that has no asar bundle left", async () => {
+  const box = await sandbox();
+  try {
+    const runtime = join(box.root, "runtime");
+    await mkdir(join(runtime, "resources", "app"), { recursive: true });
+    await writeFile(join(runtime, "electron.exe"), "MZ");
+    await writeFile(join(runtime, "resources", "app", "index.js"), "entry");
+
+    const result = await removeTree(runtime);
+    assert.equal(result.removed, true);
+    assert.deepEqual(result.leftover, []);
+    assert.equal(existsSync(runtime), false);
   } finally {
     await box.cleanup();
   }
