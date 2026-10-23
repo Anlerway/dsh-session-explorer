@@ -18,6 +18,7 @@ import assert from "node:assert/strict";
 import {
   ancestorsOf,
   buildAutoTree,
+  buildTree,
   canAcceptSessions,
   canMove,
   nearestWorkspace,
@@ -101,6 +102,22 @@ test("R2+R3: every session is counted exactly once on its own container", () => 
   assert.equal(tree.counts[workspaceNodeId("wa")], 2);
   assert.equal(tree.counts[workspaceNodeId("wb")], 1);
   assert.equal(tree.counts[FIXED_NODES.ungrouped], 1);
+});
+
+test("A2: a hidden session leaves the counts, not just the list", () => {
+  // 过滤空会话 hides sessions that never started a turn. A badge counting a row
+  // the list will not draw is the same disagreement R2/R3 forbid, so the counts
+  // are computed from the shown set — and turning the setting off restores them,
+  // because nothing was deleted.
+  const withBlank = [...sessions, { id: "s5", workspaceId: "wa", blank: true }];
+  const hidden = buildTree({ registry, sessions: withBlank });
+  assert.equal(hidden.counts[FIXED_NODES.root], sessions.length);
+  assert.equal(hidden.counts[FIXED_NODES.all], sessions.length);
+  assert.equal(hidden.counts[workspaceNodeId("wa")], 2);
+
+  const shown = buildTree({ registry, sessions: withBlank, listSettings: { hideBlank: false } });
+  assert.equal(shown.counts[FIXED_NODES.root], withBlank.length);
+  assert.equal(shown.counts[workspaceNodeId("wa")], 3);
 });
 
 test("R4: favorites and todos mirror the plugin flags and are not part of the container sum", () => {

@@ -62,6 +62,16 @@ counts[id] = sessionsOfNode(id, view, treeLike, { trashedIds: trashed }).length 
 - `f-trash` = 回收站条目数；
 - 快捷方式：指向会话的是 1 行；指向文件夹/workspace 的显示目标的大小，否则那个数字会看起来像 0。
 
+在这之前还有一道前置：**看不见的会话不计数**。`buildTree()` 先把 `sessions` 按 `listSettings.hideBlank`
+过一遍，计数用的是"列表真正会画"的那个集合（`lib/domain/tree.js:149`）：
+
+```js
+const shown = listSettings?.hideBlank === false ? live : live.filter((session) => session.blank !== true);
+```
+
+过滤空会话是视图设置，不是删除——关掉它，数字立刻回来。之所以修在 host 而不是 client：徽章比行多，
+就是 R2/R3 禁止的那种"两处各算一次"，只不过差了一步。
+
 ## 4. 会话放置（`sessionPlacement`）
 
 **核心矛盾**：DSH 从 header 的 `cwd` 推导会话属于哪个 workspace。要改变这个归属，唯一物理手段
