@@ -24,6 +24,17 @@ function choose(date, size) {
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
 
+/**
+ * A local wall-clock time, in the same zone the formatter prints in.
+ *
+ * The dates below are what a row shows, so building them from a fixed offset
+ * (2026-10-23T12:00:00+08:00) would only agree with the expectation on a machine
+ * set to +08:00 — a CI runner in UTC would print 04:00 and fail.
+ */
+function at(year, monthIndex, day, hour, minute) {
+  return new Date(year, monthIndex, day, hour, minute).getTime();
+}
+
 test("自动转换 picks the unit that keeps the number readable", () => {
   choose("date", "auto");
   // An unknown size prints nothing: the row then decides whether to show a dash.
@@ -48,17 +59,17 @@ test("固定 KB says every size in one unit", () => {
 
 test("详细日期 prints the clock time, with the year only when it is not this year", () => {
   choose("date", "auto");
-  const now = Date.parse("2026-10-23T12:00:00+08:00");
+  const now = at(2026, 9, 23, 12, 0);
   const thisYear = internals.formatWhen(now - 3 * DAY, now);
   assert.match(thisYear, new RegExp("^\\d{2}-\\d{2} \\d{2}:\\d{2}$"), thisYear);
-  const older = internals.formatWhen(Date.parse("2024-03-01T08:30:00+08:00"), now);
+  const older = internals.formatWhen(at(2024, 2, 1, 8, 30), now);
   assert.match(older, /^2024-03-01 08:30$/, older);
   assert.equal(internals.formatWhen(0, now), "", "a session with no timestamp prints nothing");
 });
 
 test("距今时间 walks the units: 分钟, 小时, 天, 月, 年", () => {
   choose("relative", "auto");
-  const now = Date.parse("2026-10-23T12:00:00+08:00");
+  const now = at(2026, 9, 23, 12, 0);
   // zh-CN RelativeTimeFormat, numeric:auto — the label a person would say, and
   // never a raw count of hours for something a week old.
   assert.match(internals.formatWhen(now - 5 * 60_000, now), /^5\s?分钟前$/, "minutes");
@@ -74,7 +85,7 @@ test("距今时间 walks the units: 分钟, 小时, 天, 月, 年", () => {
 
 test("the two choices are independent", () => {
   choose("relative", "kb");
-  const now = Date.parse("2026-10-23T12:00:00+08:00");
+  const now = at(2026, 9, 23, 12, 0);
   assert.match(internals.formatWhen(now - 2 * HOUR, now), /^2\s?小时前$/);
   assert.equal(internals.formatSize(2048), "2.0 KB");
   choose("date", "auto");
