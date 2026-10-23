@@ -203,6 +203,7 @@ async function renderSettings({ mode = "panel", component = "absent", update = n
       // patch applied, so a re-render shows the saved value.
       const doc = settingsDocument(call.body.shell?.open?.mode ?? mode, component);
       if (call.body.shell?.header) doc.settings.shell.header = call.body.shell.header;
+      if (call.body.list) Object.assign(doc.settings.list, call.body.list);
       return { ok: true, result: { settings: doc.settings, revision: 5 } };
     }
     // The component group re-probes on mount and reports the phase upward, so
@@ -326,6 +327,38 @@ test("会话界面 offers 自动 and 仅显示图标, and saves the pick alone",
   );
   const afterChips = collect(afterHeader, byClass("se-set-chip"));
   assert.match(afterChips[1].props.className, /\bon\b/, "仅显示图标 is now the chosen chip");
+});
+
+test("显示 offers 详细日期 / 距今时间 and 自动转换 / 固定 KB, each saved alone", async () => {
+  const { tree, calls, driver, api, t } = await renderSettings({ mode: "panel", component: "absent" });
+  const groups = collect(tree, byClass("se-set-grp"));
+  const display = groups.find((group) => textOf(group).includes("setGroupDisplay"));
+  assert.ok(display, "the group is on the page");
+
+  const chips = collect(display, byClass("se-set-chip"));
+  assert.deepEqual(chips.map(textOf), ["setDateDetail", "setDateRelative", "setSizeAuto", "setSizeKb"]);
+  assert.match(chips[0].props.className, /\bon\b/, "详细日期 is what the list always showed, so it stays the default");
+  assert.match(chips[2].props.className, /\bon\b/, "自动转换 is the default too");
+
+  chips[1].props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const dateWrite = calls.find((call) => call.method === "PUT" && call.url.endsWith("/settings"));
+  assert.ok(dateWrite, "the click writes immediately");
+  // A patch of exactly this key: the page does not echo a document it read
+  // minutes ago back over whatever the panel changed in the meantime.
+  assert.deepEqual(dateWrite.body, { list: { dateFormat: "relative" } });
+
+  const afterDate = await driver.settle(() => page(driver, api, t));
+  const afterDateChips = collect(
+    collect(afterDate, byClass("se-set-grp")).find((group) => textOf(group).includes("setGroupDisplay")),
+    byClass("se-set-chip"),
+  );
+  assert.match(afterDateChips[1].props.className, /\bon\b/, "距今时间 is now the chosen chip");
+
+  afterDateChips[3].props.onClick();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const sizeWrite = calls.filter((call) => call.method === "PUT").at(-1);
+  assert.deepEqual(sizeWrite.body, { list: { sizeFormat: "kb" } });
 });
 
 /** The 关于 group. It is no longer the last one on the page — 危险操作 follows it,

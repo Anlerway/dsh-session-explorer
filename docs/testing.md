@@ -13,7 +13,7 @@ npm run test:render      # node test/render-smoke.mjs
 测试全部用 `node:test` + `node:assert`，没有第三方测试框架、没有 DOM 实现依赖——
 `render-smoke` 自带一个极小的假 document。
 
-## 1. 三十三个测试文件，各自钉住什么
+## 1. 三十四个测试文件，各自钉住什么
 
 | 文件 | 行数 | 钉住的东西 |
 |---|---|---|
@@ -26,8 +26,9 @@ npm run test:render      # node test/render-smoke.mjs
 | `test/theme.test.mjs` | 104 | 主题 store 只交出窗口用的 token，且拒绝注入 |
 | `test/theme-report.test.mjs` | 132 | 面板**上报**的那一半：DSH 把调色板声明在 `body` 上、值是 `var()` 引用 |
 | `test/bridge.test.mjs` | 143 | 总线的边界：容量、30 秒时效、游标、坏订阅者 |
-| `test/settings.test.mjs` | 234 | 设置文档的默认值、合并、归一化 |
-| `test/settings-page.test.mjs` | 576 | 设置页真实渲染：打开方式、「关于」组、危险操作组（DELETE 才亮红按钮）、数据目录、写请求的 body |
+| `test/settings.test.mjs` | 266 | 设置文档的默认值、合并、归一化；日期格式与大小单位是封闭词表 |
+| `test/settings-page.test.mjs` | 609 | 设置页真实渲染：打开方式、「关于」组、危险操作组（DELETE 才亮红按钮）、数据目录、显示格式、写请求的 body |
+| `test/display-format.test.mjs` | 81 | 两种日期格式与两种大小单位真正打印出来的样子：单位阶梯走到月与年、固定 KB 不换单位 |
 | `test/session-state.test.mjs` | 100 | DSH 自己的界面读的那一个布尔集合 |
 | `test/subagents.test.mjs` | 80 | 子智能体绑定四问；fork 带 `parentSession` 但是独立会话 |
 | `test/trash.test.mjs` | 425 | 回收站：删除、恢复阶梯、清空、对账 |

@@ -52,7 +52,7 @@ lib/
   detached/           Electron helper：launcher、main.cjs、preload.cjs
 assets/detached/      独立窗口的页面：index.html、window.css、shim.js（不自带 UI）
 assets/vendor/        自带 React 18.3.1 UMD 构建
-test/                 33 个测试文件 + render-smoke
+test/                 34 个测试文件 + render-smoke
 docs/                 开发文档（见下）
 ```
 
@@ -93,7 +93,7 @@ desktop profile 是 Electron 应用组装出来的，`dsh profile` 也重建不�
 | 空会话 | 从未开始过一轮对话的会话被标为空白，默认从列表里过滤掉（设置里可关） |
 | 定位 | 会话详情面板与行菜单都有「复制文件路径」：由 Host 找出日志路径（含回收站里的），写进剪贴板；不弹窗口，跨机器也能用 |
 | 主题 | 不硬编码颜色，全部用 `--dsw-alias-*`；独立窗口由面板把 14 个 token 报给 Host 再取用 |
-| 设置 | 浮窗/独立弹窗、尺寸、遮罩、会话界面按钮样式（自动/仅图标）、自动折叠、显示已归档、折叠子智能体（开关）、过滤空会话（开关）、数据目录迁移、组件管理、关于（版本、检查更新、清理缓存、Star、反馈）、危险操作（清除数据，不可逆，需键入 DELETE） |
+| 设置 | 浮窗/独立弹窗、尺寸、遮罩、会话界面按钮样式（自动/仅图标）、自动折叠、显示已归档、折叠子智能体（开关）、过滤空会话（开关）、日期格式（详细日期/距今时间）、大小单位（自动转换/固定 KB）、数据目录迁移、组件管理、关于（版本、检查更新、清理缓存、Star、反馈）、危险操作（清除数据，不可逆，需键入 DELETE） |
 
 ## 开发文档
 
@@ -106,7 +106,7 @@ desktop profile 是 Electron 应用组装出来的，`dsh profile` 也重建不�
 | [docs/tree-and-placement.md](docs/tree-and-placement.md) | 节点种类、R1–R5、计数、快捷方式 |
 | [docs/bridge-and-theme.md](docs/bridge-and-theme.md) | 命令总线、SSE、主题同步 |
 | [docs/component.md](docs/component.md) | 浏览器组件的状态机与安装流程 |
-| [docs/testing.md](docs/testing.md) | 三十三个测试文件各钉住什么 |
+| [docs/testing.md](docs/testing.md) | 三十四个测试文件各钉住什么 |
 
 ## 测试
 

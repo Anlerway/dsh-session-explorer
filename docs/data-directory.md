@@ -87,7 +87,9 @@ C:\Users\<user>\.dsh-session-explorer   ← 本插件的
   "list": { "autoCollapse": false,
             "showArchived": true,
             "collapseSubagents": true,   // 折叠子智能体：开关，默认折叠
-            "hideBlank": true },         // 过滤空会话：开关，默认过滤
+            "hideBlank": true,           // 过滤空会话：开关，默认过滤
+            "dateFormat": "date",        // date | relative，详细日期 vs 距今时间
+            "sizeFormat": "auto" },      // auto | kb，自动转换 vs 固定 KB
   "dataDir": { "current": null }
 }
 ```
@@ -99,6 +101,11 @@ C:\Users\<user>\.dsh-session-explorer   ← 本插件的
 `collapseSubagents` 以前是 `subagents: "collapsed" | "expanded"` 两选一，现在是一个开关：
 两种状态本来就是全部选择，用词表把它做成模式只是让一个二元偏好看起来更复杂。旧文档里的
 `subagents` 仍然被读：`expanded` 迁成 `false`，两者同时存在时以开关为准。
+
+`dateFormat` 与 `sizeFormat` 是列表里那两列怎么写：`date` 写具体时刻，`relative` 写「3 天前」
+（单位随距离走：分钟 → 小时 → 天 → 月 → 年，用 `Intl.RelativeTimeFormat`，语言跟着面板当前的
+语言）；`auto` 在 B / KB / MB / GB 里挑合适的单位，`kb` 一列只用一个单位，方便竖着比大小。
+两者的默认值都等于改造之前的样子，所以升级不会改变任何人的列表。
 
 `mergeSettings()` 只认已知键，未知键在归一化时被丢掉，而不是落盘等下个版本困惑。
 

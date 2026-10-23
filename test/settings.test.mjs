@@ -12,12 +12,14 @@ import { homedir } from "node:os";
 import { join, parse } from "node:path";
 
 import {
+  DATE_FORMATS,
   HEADER_STYLES,
   MAX_DIM,
   MODAL_FIXED_SIZES,
   MODAL_PERCENT_SIZES,
   MODAL_SIZING,
   OPEN_MODES,
+  SIZE_FORMATS,
   SUBAGENT_MODES,
   defaultSettings,
   mergeSettings,
@@ -135,6 +137,36 @@ test("折叠子智能体 and 过滤空会话 are switches, both on by default", 
   assert.equal(merged.list.collapseSubagents, false);
   assert.equal(merged.list.showArchived, true);
   assert.equal(mergeSettings(merged, { list: { showArchived: false } }).list.collapseSubagents, false);
+});
+
+test("日期格式 and 大小单位 are closed vocabularies, defaulting to what the list always showed", () => {
+  // 详细日期 / 自动转换 are the shipped behaviour: a new setting must not change
+  // how an existing panel looks until the user asks for it.
+  assert.equal(defaultSettings().list.dateFormat, "date");
+  assert.equal(defaultSettings().list.sizeFormat, "auto");
+  assert.deepEqual([...DATE_FORMATS], ["date", "relative"]);
+  assert.deepEqual([...SIZE_FORMATS], ["auto", "kb"]);
+
+  for (const good of DATE_FORMATS) {
+    assert.equal(normalizeSettings({ list: { dateFormat: good } }).list.dateFormat, good);
+  }
+  for (const good of SIZE_FORMATS) {
+    assert.equal(normalizeSettings({ list: { sizeFormat: good } }).list.sizeFormat, good);
+  }
+  // A hand-edited file cannot invent a third format: the value would reach a
+  // formatter with no branch for it and print something nobody chose.
+  for (const bad of ["Date", "relative ", "KB", 1, null, {}]) {
+    assert.equal(normalizeSettings({ list: { dateFormat: bad } }).list.dateFormat, "date");
+    assert.equal(normalizeSettings({ list: { sizeFormat: bad } }).list.sizeFormat, "auto");
+  }
+
+  // The two are independent, and a patch of one keeps the other.
+  const merged = mergeSettings(defaultSettings(), { list: { dateFormat: "relative" } });
+  assert.equal(merged.list.dateFormat, "relative");
+  assert.equal(merged.list.sizeFormat, "auto");
+  const both = mergeSettings(merged, { list: { sizeFormat: "kb" } });
+  assert.equal(both.list.dateFormat, "relative");
+  assert.equal(both.list.sizeFormat, "kb");
 });
 
 test("sizing modes and presets are closed vocabularies", () => {
