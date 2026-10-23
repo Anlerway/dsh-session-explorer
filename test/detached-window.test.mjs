@@ -79,13 +79,25 @@ function harness(options = {}) {
     return node;
   };
 
-  const byId = new Map([["root", root]]);
+  // The page's own chrome, as index.html ships it: the boot card and its line,
+  // which the shim rewrites when the window is in English.
+  const bootTitle = element("div");
+  bootTitle.className = "boot-title";
+  bootTitle.textContent = "会话资源管理器";
+  const bootSub = element("div");
+  bootSub.id = "boot-sub";
+  bootSub.textContent = "正在启动…";
+
+  const byId = new Map([
+    ["root", root],
+    ["boot-sub", bootSub],
+  ]);
   const body = element("body");
   const document = {
     body,
     documentElement: { style: { setProperty() {} }, setAttribute() {} },
     getElementById: (id) => byId.get(id) ?? null,
-    querySelector: () => null,
+    querySelector: (selector) => (selector === ".boot-title" ? bootTitle : null),
     createElement: (tag) => element(tag),
     createElementNS: (_namespace, tag) => element(tag),
   };
@@ -99,7 +111,12 @@ function harness(options = {}) {
     createRoot: (container) => ({ render: (element) => rendered.push({ container, element }) }),
   };
 
+  // \`lang\` is how the Host tells the page which language to draw in (the window
+  // cannot see DSH's switch), so a harness without it is a 中文 window.
   const window = { React, ReactDOM, fetch: fakeFetch };
+  if (options.lang) {
+    window.location = { href: "http://127.0.0.1:1234/session-explorer/api/ui?lang=" + options.lang };
+  }
   window.se = {
     async window(action) {
       calls.push({ url: "/window", method: action, body: null });
@@ -111,7 +128,7 @@ function harness(options = {}) {
   const run = new Function("window", "document", "setTimeout", "console", SHIM);
   run(window, document, setTimeout, { log() {}, warn() {}, error() {} });
 
-  return { window, document, root, calls, rendered, React, ReactDOM };
+  return { window, document, root, calls, rendered, bootTitle, bootSub, React, ReactDOM };
 }
 
 /**
@@ -419,4 +436,126 @@ test("the window never reports its own palette", async () => {
   // Reading the palette is how the window gets its colours, so that still works.
   await ctx.window.fetch("/session-explorer/api/theme");
   assert.ok(ctx.calls.some((call) => call.url.endsWith("/theme") && call.method === "GET"));
+});
+
+// ── 语言 ────────────────────────────────────────────────────────────────────
+// The window is its own process: it cannot observe DSH's language switch, so the
+// Host says which language to draw in when it loads the page (?lang=), and
+// reloads the page when the panel's language changes. Everything below pins that
+// one seam, because a window stuck in Chinese is invisible from inside DSH.
+
+/** The two dictionaries the panel registers, shaped like the settings page's. */
+const DICTIONARIES = {
+  zh: { langCode: "zh", footerLabel: "会话资源管理器", count: "{n} 个会话" },
+  en: { langCode: "en", footerLabel: "Session Explorer" },
+};
+
+test("the window draws in the language the Host asked for", () => {
+  const ctx = harness({ lang: "en" });
+  const module = load(fakeModule({ dictionary: DICTIONARIES }), ctx);
+
+  const t = ctx.rendered[0].element.props.t;
+  assert.equal(module.ctx.locale.language(), "en", "the platform reports English");
+  assert.equal(module.ctx.locale.current(), "en");
+  assert.equal(t("langCode"), "en", "which is how the panel itself finds out");
+  assert.equal(t("footerLabel"), "Session Explorer");
+
+  // A key the English dictionary does not carry falls back to Chinese: a label
+  // in the wrong language beats a raw key on a button.
+  assert.equal(t("count", { n: 3 }), "3 个会话");
+  assert.equal(t("missing"), "missing", "and a key neither carries is its own name");
+});
+
+test("without a language in the URL the window is 中文", () => {
+  const ctx = harness();
+  const module = load(fakeModule({ dictionary: DICTIONARIES }), ctx);
+
+  const t = ctx.rendered[0].element.props.t;
+  assert.equal(module.ctx.locale.language(), "zh");
+  assert.equal(t("footerLabel"), "会话资源管理器");
+  assert.equal(ctx.bootTitle.textContent, "会话资源管理器", "the boot card is left alone");
+  assert.equal(ctx.bootSub.textContent, "正在启动…");
+});
+
+test("an English window rewrites the page's own chrome", () => {
+  const ctx = harness({ lang: "en" });
+  load(fakeModule({ dictionary: DICTIONARIES }), ctx);
+
+  // index.html is authored in Chinese and parsed before any script runs, so the
+  // shim is the only thing that can change what the first frame says.
+  assert.equal(ctx.document.title, "Session Explorer");
+  assert.equal(ctx.document.documentElement.lang, "en");
+  assert.equal(ctx.bootTitle.textContent, "Session Explorer");
+  assert.equal(ctx.bootSub.textContent, "Starting…");
+});
+
+test("the caption speaks the window's language too", async () => {
+  const ctx = harness({ lang: "en", frame: (action) => (action === "state" ? { maximized: true } : undefined) });
+  load(fakeModule({ dictionary: DICTIONARIES }), ctx);
+  await tick();
+
+  const buttons = caption(ctx).children;
+  // The frame answered "maximised", so the toggle offers to restore — labelled,
+  // not just glyphed, and in English like the rest of the window.
+  assert.deepEqual(
+    buttons.map((button) => button.attributes["aria-label"]),
+    ["Minimize", "Restore", "Close"],
+  );
+  assert.equal(buttons[1].attributes.title, "Restore");
+});
+
+test("a failure before the panel loads is reported in the window's language", () => {
+  const ctx = harness({ lang: "en" });
+  // A factory that throws is the earliest thing that can go wrong: React is up,
+  // the panel is not.
+  assert.throws(() => {
+    ctx.window.__ModuleLoader__.load({
+      id: "broken",
+      factory: () => {
+        throw new Error("boom");
+      },
+    });
+  }, /boom/);
+  assert.equal(ctx.bootSub.textContent, "The panel failed to load.");
+});
+
+// ── the language's way to the window ───────────────────────────────────────
+// Three files have to agree on one string, and a break in the chain is silent
+// (the window simply keeps the default), so each hop is pinned.
+
+test("the Host answers the panel's language with a window in it", () => {
+  assert.match(
+    HOST,
+    /"POST \/detached\/open": async \(api, req\) => \{[\s\S]*req\.body\?\.lang === "en" \? "en" : "zh"/,
+    "the route reads lang off the request",
+  );
+  assert.match(HOST, /api\.detached\.open\(\{ lang: /, "and hands it to the controller");
+});
+
+test("the controller passes the language to the helper, and to a window already open", () => {
+  const launcher = read("lib/detached/launcher.js");
+  assert.match(launcher, /DSH_SE_LANG: lang/, "the helper learns it from the environment");
+  assert.match(launcher, /async open\(request = \{\}\)/, "open carries the request");
+  // A window that is already on screen keeps the dictionary it loaded: the only
+  // way to change it is a reload, so the controller has to say so.
+  assert.match(launcher, /broadcast\(\{ type: "lang", lang \}\)/, "an open window is told to reload");
+});
+
+test("the helper puts the language in the page's URL, and reloads on a switch", () => {
+  const main = read("lib/detached/main.cjs");
+  assert.match(main, /DSH_SE_LANG === "en" \? "en" : "zh"/, "the helper starts in the language it was spawned with");
+  assert.match(main, new RegExp("\\?lang=\\$\\{pageLang\\}"), "and tells the page");
+  assert.match(main, /message\.type === "lang"/, "a later switch arrives as a control message");
+  assert.match(main, /win\.loadURL\(url\)/, "which reloads the page");
+});
+
+test("the panel tells the Host which language it is drawing in", () => {
+  const client = read("lib/client.js");
+  assert.match(client, /function uiLang\(\)/, "one place answers the question");
+  assert.match(client, /bound\("langCode"\) === "en"/, "by asking the bound translator, not a second API");
+  // Every entry point that can open the window has to say it: a reveal from the
+  // sidebar opens the window on a page that never rendered the panel.
+  const opens = [...client.matchAll(/apiSend\("POST", "\/detached\/open", (\{[^}]*\})/g)].map((match) => match[1]);
+  assert.equal(opens.length, 4, "four places open the window");
+  for (const args of opens) assert.match(args, /lang: uiLang\(\)/, "open-window call carries the language: " + args);
 });

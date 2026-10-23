@@ -30,6 +30,39 @@
   const API = "/session-explorer/api";
   const NS = "session-explorer";
 
+  /**
+   * The language this page draws in.
+   *
+   * The window is a separate process with its own document, so it cannot see
+   * DSH's language switch. The Host puts the answer in the URL when it loads the
+   * page, and reloads the page with the other value when the panel's language
+   * changes (see `applyLang` in lib/detached/main.cjs) — a dictionary only ever
+   * changes by reloading, because the panel reads the language once per render.
+   *
+   * @type {"zh" | "en"}
+   */
+  const LANG = (() => {
+    try {
+      const href = (window.location && window.location.href) || "";
+      return new URL(href, "http://127.0.0.1/").searchParams.get("lang") === "en" ? "en" : "zh";
+    } catch {
+      return "zh";
+    }
+  })();
+
+  /**
+   * The shim's own copy: the dozen lines that exist before the panel renders,
+   * and after it dies. Everything the panel itself draws goes through its own
+   * dictionary, which arrives through `locale.register` below.
+   *
+   * @param {string} zh
+   * @param {string} en
+   * @returns {string}
+   */
+  function L(zh, en) {
+    return LANG === "en" ? en : zh;
+  }
+
   const React = window.React;
   const ReactDOM = window.ReactDOM;
 
@@ -38,13 +71,24 @@
     if (sub) sub.textContent = text;
   }
 
+  // The page's static chrome is authored in Chinese (assets/detached/index.html)
+  // and rewritten here, because a document is parsed long before any script can
+  // run: a Chinese window would flash before an English one appeared otherwise.
+  if (LANG === "en") {
+    document.documentElement.lang = "en";
+    document.title = "Session Explorer";
+    const title = document.querySelector(".boot-title");
+    if (title) title.textContent = "Session Explorer";
+    note("Starting…");
+  }
+
   function warn(message, error) {
     if (error === undefined) console.error(`session-explorer detached: ${message}`);
     else console.error(`session-explorer detached: ${message}`, error);
   }
 
   if (!React || !ReactDOM) {
-    note("React 未能加载，窗口无法启动。");
+    note(L("React 未能加载，窗口无法启动。", "React failed to load, so the window cannot start."));
     warn("react did not load");
     return;
   }
@@ -114,17 +158,27 @@
   }
 
   /**
-   * The window's copy is Chinese, like the panel's default: the plugin's own
-   * strings are authored in Chinese and the English dictionary exists for DSH's
-   * language switch, which a detached window cannot observe.
+   * The window's translator.
+   *
+   * The panel registers both dictionaries here and asks for keys exactly as it
+   * does inside DSH, so this has to answer in the window's language rather than
+   * always in Chinese. A key the chosen dictionary lacks falls back to the
+   * Chinese one and then to the key itself: a half-translated screen is worse
+   * than a Chinese label, and far better than `setCompInstall` on a button.
    *
    * @param {string} key
    * @param {Record<string, unknown>} [vars]
    * @returns {string}
    */
   function translate(key, vars) {
-    const dictionary = dictionaries.zh || {};
-    const text = typeof dictionary[key] === "string" ? dictionary[key] : key;
+    const preferred = dictionaries[LANG] || {};
+    const fallback = dictionaries.zh || {};
+    const text =
+      typeof preferred[key] === "string"
+        ? preferred[key]
+        : typeof fallback[key] === "string"
+          ? fallback[key]
+          : key;
     return interpolate(text, vars);
   }
 
@@ -141,10 +195,10 @@
       return translate;
     },
     current() {
-      return "zh";
+      return LANG;
     },
     language() {
-      return "zh";
+      return LANG;
     },
   };
 
@@ -199,7 +253,7 @@
     const previous = sent.get(key) || 0;
     if (now - previous < ECHO_MS) return null;
     sent.set(key, now);
-    if (!realFetch) throw new Error("窗口无法访问 Host");
+    if (!realFetch) throw new Error(L("窗口无法访问 Host", "The window cannot reach the Host"));
     const response = await realFetch(API + "/bridge/commands", {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json; charset=utf-8" },
@@ -207,7 +261,7 @@
     });
     const envelope = await response.json().catch(() => null);
     if (!envelope || envelope.ok !== true) {
-      throw new Error((envelope && envelope.error) || "命令未能送达 DSH");
+      throw new Error((envelope && envelope.error) || L("命令未能送达 DSH", "The command did not reach DSH"));
     }
     return envelope.result;
   }
@@ -296,7 +350,7 @@
       try {
         exports = spec.factory(requireShim);
       } catch (error) {
-        note("面板加载失败。");
+        note(L("面板加载失败。", "The panel failed to load."));
         warn(`module ${id} threw while loading`, error);
         throw error;
       }
@@ -321,14 +375,14 @@
     try {
       exports.apply(ctx);
     } catch (error) {
-      note("面板未能启动。");
+      note(L("面板未能启动。", "The panel could not start."));
       warn("apply() failed", error);
       throw error;
     }
 
     const entry = slotRegistry.get("sidebar.footer.action");
     if (!entry) {
-      note("面板没有注册入口。");
+      note(L("面板没有注册入口。", "The panel registered no entry point."));
       warn("no sidebar.footer.action slot was registered");
       return;
     }
@@ -342,7 +396,7 @@
     try {
       ReactDOM.createRoot(container).render(React.createElement(entry.Component, { t: translate }));
     } catch (error) {
-      note("面板渲染失败。");
+      note(L("面板渲染失败。", "The panel failed to render."));
       warn("render failed", error);
       throw error;
     }
@@ -477,22 +531,22 @@
       return button;
     };
 
-    addButton("minimize", "最小化", ["M3 8h10"], () => void Promise.resolve(bridge.window("minimize")).catch(() => {}));
+    addButton("minimize", L("最小化", "Minimize"), ["M3 8h10"], () => void Promise.resolve(bridge.window("minimize")).catch(() => {}));
 
     // Maximise is a toggle, and the glyph stays the same in both states: what
     // changes is the label, which is what a screen reader and the tooltip read.
-    const toggle = addButton("maximize", "最大化", ["M3.5 3.5h9v9h-9z"], () => {
+    const toggle = addButton("maximize", L("最大化", "Maximize"), ["M3.5 3.5h9v9h-9z"], () => {
       void Promise.resolve(bridge.window("maximize"))
         .then(sync)
         .catch(() => {});
     });
 
-    addButton("close", "关闭", ["M3.5 3.5l9 9", "M12.5 3.5l-9 9"], () => closeWindow());
+    addButton("close", L("关闭", "Close"), ["M3.5 3.5l9 9", "M12.5 3.5l-9 9"], () => closeWindow());
 
     /** @param {{ maximized?: boolean } | undefined} state */
     function sync(state) {
       if (!state || typeof state.maximized !== "boolean") return;
-      const label = state.maximized ? "还原" : "最大化";
+      const label = state.maximized ? L("还原", "Restore") : L("最大化", "Maximize");
       toggle.setAttribute("title", label);
       toggle.setAttribute("aria-label", label);
     }
