@@ -102,7 +102,7 @@ test("a write cites the revision of the store it touches", async () => {
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, "POST");
-  assert.equal(calls[0].url, "/session-explorer/api/nodes/d-1/move");
+  assert.equal(calls[0].url, "/session-navigator/api/nodes/d-1/move");
   assert.equal(calls[0].headers["if-match"], '"7"', 'the header is a quoted entity tag');
   assert.deepEqual(calls[0].body, { parent: "f-root" });
   assert.equal(api.revisions.tree, 8, "the write's own answer is adopted");
@@ -111,7 +111,7 @@ test("a write cites the revision of the store it touches", async () => {
 test("the three stores do not lend each other their revisions", async () => {
   const { api, calls } = clientWith((call) => ({
     ok: true,
-    result: { revision: call.url.startsWith("/session-explorer/api/settings") ? 2 : 11 },
+    result: { revision: call.url.startsWith("/session-navigator/api/settings") ? 2 : 11 },
   }));
   api.revisions.tree = 7;
   api.revisions.annotations = 3;

@@ -151,7 +151,7 @@ shim **会拦掉**窗口发出的 `POST /theme`（`assets/detached/shim.js:93`�
 ## 5. 独立窗口
 
 `POST /detached/open` / `POST /detached/close`（`lib/index.js:994`）。窗口本体是 DSH 的
-Electron 窗口，加载 `/session-explorer/api/ui`，需要浏览器组件就绪，否则 404 `component-not-installed`。
+Electron 窗口，加载 `/session-navigator/api/ui`，需要浏览器组件就绪，否则 404 `component-not-installed`。
 
 窗口打开/关闭时 host 往总线发 `window-open` / `window-closed`（`lib/index.js:157-158`），
 页面据此更新"默认打开方式"的状态和按钮文案。

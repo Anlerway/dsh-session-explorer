@@ -1,6 +1,6 @@
 # HTTP API
 
-所有端点都挂在 `/session-explorer/api` 前缀下，由 `lib/index.js:379` 的 `ROUTES` 表定义，
+所有端点都挂在 `/session-navigator/api` 前缀下，由 `lib/index.js:379` 的 `ROUTES` 表定义，
 `lib/index.js:1529` 的 `handle()` 分发。共 **62 条**。
 
 ## 1. 信封
@@ -100,7 +100,7 @@ bad-request`，而不是悄悄当没给——否则一个写错的头会变成"�
 
 ```bash
 curl -X POST -H 'content-type: application/json' -d '{"ids":["s1"]}' \
-  http://127.0.0.1:63334/session-explorer/api/trash
+  http://127.0.0.1:63334/session-navigator/api/trash
 ```
 
 没有 `Sec-Fetch-Site` 的请求（curl、脚本、本机工具）照常放行——它们不是跨站浏览器请求。

@@ -63,7 +63,7 @@ test("compareVersions orders releases the way a human reads them", () => {
 test("parseRelease keeps what the rows show and trims the notes", () => {
   const release = parseRelease({
     tag_name: "v2.0.0",
-    html_url: "https://github.com/Anlerway/dsh-session-explorer/releases/tag/v2.0.0",
+    html_url: "https://github.com/Anlerway/dsh-session-navigator/releases/tag/v2.0.0",
     name: "2.0.0",
     published_at: "2026-10-20T10:00:00Z",
     body: "x".repeat(5000),
@@ -86,7 +86,7 @@ test("a newer release turns hasUpdate on, and is answered from the cache next ti
   assert.equal(first.latest, "1.2.0");
   assert.equal(first.hasUpdate, true);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "https://api.github.com/repos/Anlerway/dsh-session-explorer/releases/latest");
+  assert.equal(calls[0].url, "https://api.github.com/repos/Anlerway/dsh-session-navigator/releases/latest");
   assert.match(calls[0].init.headers["user-agent"], /^dsh-session-navigator\//);
 
   // Second press inside the TTL: no second request.

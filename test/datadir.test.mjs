@@ -18,7 +18,14 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 
 import { describeDataDir, inspectDataDir, migrateDataDir, readLocation } from "../lib/host/datadir.js";
-import { ensureDataDir, dataPaths, resolveDataDir } from "../lib/paths.js";
+import {
+  DATA_DIR_NAME,
+  LEGACY_DATA_DIR_NAME,
+  defaultDataDir,
+  ensureDataDir,
+  dataPaths,
+  resolveDataDir,
+} from "../lib/paths.js";
 import { openDocuments } from "../lib/store/documents.js";
 
 /**
@@ -279,7 +286,7 @@ test("moving the default directory leaves a signpost, not a hole", async () => {
     const home = join(box.root, "home");
     process.env.HOME = home;
     process.env.USERPROFILE = home;
-    const fallback = join(home, ".dsh-session-explorer");
+    const fallback = join(home, ".dsh-session-navigator");
     const target = join(box.root, "elsewhere");
 
     const api = await host(fallback);
@@ -344,8 +351,8 @@ test("resolveDataDir prefers the environment, then the recorded location", async
     // 2. Without it, the default directory's own settings document decides.
     delete process.env.DSH_SE_DATA_DIR;
     const home = join(box.root, "home");
-    ensureDataDir(join(home, ".dsh-session-explorer"));
-    const seeded = dataPaths(join(home, ".dsh-session-explorer"));
+    ensureDataDir(join(home, ".dsh-session-navigator"));
+    const seeded = dataPaths(join(home, ".dsh-session-navigator"));
     const documents = openDocuments(seeded);
     await documents.settings.mutate((draft) => {
       draft.dataDir = { current: recorded };
@@ -353,12 +360,46 @@ test("resolveDataDir prefers the environment, then the recorded location", async
     assert.equal(resolveDataDir({ HOME: home, USERPROFILE: home }), recorded);
 
     // 3. With neither, the default location.
-    await rm(join(home, ".dsh-session-explorer", "settings.v1.json"), { force: true });
-    assert.equal(resolveDataDir({ HOME: home, USERPROFILE: home }), join(home, ".dsh-session-explorer"));
+    await rm(join(home, ".dsh-session-navigator", "settings.v1.json"), { force: true });
+    assert.equal(resolveDataDir({ HOME: home, USERPROFILE: home }), join(home, ".dsh-session-navigator"));
     assert.ok(fallback);
   } finally {
     if (previous === undefined) delete process.env.DSH_SE_DATA_DIR;
     else process.env.DSH_SE_DATA_DIR = previous;
+    await box.cleanup();
+  }
+});
+
+test("a pre-rename data directory is adopted, not ignored", async () => {
+  const box = await sandbox();
+  const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  try {
+    const home = join(box.root, "home");
+    const legacy = join(home, LEGACY_DATA_DIR_NAME);
+    const current = join(home, DATA_DIR_NAME);
+    await mkdir(join(legacy, "trash"), { recursive: true });
+    await writeFile(join(legacy, "tree.v1.json"), JSON.stringify({ folders: {} }), "utf8");
+
+    // The plugin used to be called dsh-session-explorer; an install that
+    // predates the rename must keep its folders and trash after upgrading.
+    const env = { HOME: home, USERPROFILE: home };
+    assert.equal(defaultDataDir(env), current);
+    assert.equal(resolveDataDir(env), current);
+    assert.equal(existsSync(legacy), false, "the old directory is gone, not duplicated");
+    assert.equal(existsSync(join(current, "tree.v1.json")), true, "the data came along");
+    assert.equal(existsSync(join(current, "trash")), true, "including the trash payloads");
+
+    // A directory that already exists under the new name wins; the old one is
+    // left alone rather than merged or deleted.
+    await mkdir(legacy, { recursive: true });
+    await writeFile(join(legacy, "keep.txt"), "untouched", "utf8");
+    assert.equal(resolveDataDir(env), current);
+    assert.equal(existsSync(join(legacy, "keep.txt")), true);
+  } finally {
+    if (previous.HOME === undefined) delete process.env.HOME;
+    else process.env.HOME = previous.HOME;
+    if (previous.USERPROFILE === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = previous.USERPROFILE;
     await box.cleanup();
   }
 });

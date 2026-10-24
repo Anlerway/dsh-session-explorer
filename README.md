@@ -30,7 +30,7 @@
 | Host | `lib/index.js` | Cordis，应用启动时加载一次 |
 | Client | `lib/client.js` | 渲染进程里的 `window.__ModuleLoader__.load`，无构建步骤 |
 
-Host 在 DSH 的 web 服务器上注册一个 `/session-explorer/api` 前缀路由；Client 注册
+Host 在 DSH 的 web 服务器上注册一个 `/session-navigator/api` 前缀路由；Client 注册
 `sidebar.footer.action` 等 5 个槽位，并把面板 portal 到 `<body>` 上的固定层。
 
 ```
@@ -65,7 +65,7 @@ docs/                 开发文档（见下）
 插件页 →「已安装」旁的**「发现」**标签 → **添加索引源**，填：
 
 ```text
-https://anlerway.github.io/dsh-session-explorer/market/index.json
+https://anlerway.github.io/dsh-session-navigator/market/index.json
 ```
 
 搜「会话资源管理器 / Session Explorer」→ **安装** → 确认来源是 npm 上的 `dsh-session-navigator` → 重启 DSH。
@@ -81,12 +81,12 @@ dsh plugin --profile web add dsh-session-navigator   # 桌面版用 --profile de
 
 装完重启 DSH。
 
-刚发布的版本可能被 pnpm 的「最小发布年龄」策略挡在门外，解析到旧版；要立刻装这一次的版本，就把版本号写全：`dsh plugin --profile web add dsh-session-navigator@1.0.1`。
+刚发布的版本可能被 pnpm 的「最小发布年龄」策略挡在门外，解析到旧版；要立刻装这一次的版本，就把版本号写全：`dsh plugin --profile web add dsh-session-navigator@1.0.2`。
 
 ### 3. GitHub 源码
 
 ```bash
-dsh plugin --profile web add github:Anlerway/dsh-session-explorer
+dsh plugin --profile web add github:Anlerway/dsh-session-navigator
 ```
 
 本插件没有构建步骤（`lib/` 直接随仓库走），也不强装任何原生依赖——安装时不会卡在 pnpm ≥10 的「拒绝执行安装脚本」上。`koffi` 是**可选**的 peer：装了就「在文件夹中显示」走原生 `SHOpenFolderAndSelectItems`（~15ms），没装就回退到 PowerShell，只慢一点，不缺功能。
@@ -123,7 +123,7 @@ desktop profile 是 Electron 应用组装出来的，`dsh profile` 也重建不�
 
 ## 数据
 
-全部侧车状态在 `~/.dsh-session-explorer/`——`~/.dsh` 的**兄弟**，不是子目录，所以卸载插件
+全部侧车状态在 `~/.dsh-session-navigator/`——`~/.dsh` 的**兄弟**，不是子目录，所以卸载插件
 就是删一个目录。定位顺序是 `DSH_SE_DATA_DIR` → 默认位置 `settings.v1.json` 里的
 `dataDir.current` → `.location` 指针，详见 [docs/data-directory.md](docs/data-directory.md)。
 

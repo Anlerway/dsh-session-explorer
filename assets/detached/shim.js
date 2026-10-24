@@ -27,8 +27,8 @@
 (function () {
   "use strict";
 
-  const API = "/session-explorer/api";
-  const NS = "session-explorer";
+  const API = "/session-navigator/api";
+  const NS = "session-navigator";
 
   /**
    * The language this page draws in.
@@ -83,8 +83,8 @@
   }
 
   function warn(message, error) {
-    if (error === undefined) console.error(`session-explorer detached: ${message}`);
-    else console.error(`session-explorer detached: ${message}`, error);
+    if (error === undefined) console.error(`session-navigator detached: ${message}`);
+    else console.error(`session-navigator detached: ${message}`, error);
   }
 
   if (!React || !ReactDOM) {

@@ -21,9 +21,9 @@
       },
       "icon": "icons/icon.png",
       "author": "Anlerway",
-      "homepage": "https://github.com/Anlerway/dsh-session-explorer#readme",
+      "homepage": "https://github.com/Anlerway/dsh-session-navigator#readme",
       "repository": {
-        "url": "https://github.com/Anlerway/dsh-session-explorer"
+        "url": "https://github.com/Anlerway/dsh-session-navigator"
       },
       "versions": [
         {

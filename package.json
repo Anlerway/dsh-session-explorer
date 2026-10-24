@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-navigator",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "会话资源管理器 (Session resource manager) for DeepSeek Harness: virtual folders, tags, notes, trash and multi-workspace session browsing on top of the native DSH session store.",
   "type": "module",
   "engines": {
@@ -35,7 +35,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Anlerway/dsh-session-explorer.git"
+    "url": "git+https://github.com/Anlerway/dsh-session-navigator.git"
   },
   "license": "MIT",
   "publishConfig": {

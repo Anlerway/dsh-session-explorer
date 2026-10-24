@@ -92,7 +92,7 @@ function makeDom() {
 /** A `fetch` that answers a route table and keeps its calls. */
 function routedFetch(routes) {
   return recordingFetch((call) => {
-    const path = call.url.replace("/session-explorer/api", "");
+    const path = call.url.replace("/session-navigator/api", "");
     const route = routes.find((entry) => entry.method === call.method && entry.path === path);
     return route ? route.answer : { ok: true, result: {} };
   });
@@ -216,7 +216,7 @@ test("更多设置… drives the product command that the sidebar Settings butto
     }),
   );
 
-  const opened = await api.openNativeSettings("session-explorer", "会话资源管理器");
+  const opened = await api.openNativeSettings("session-navigator", "会话资源管理器");
   assert.equal(opened, true);
   assert.equal(invocations.length, 1);
   assert.equal(invocations[0].id, "settings.open");
@@ -237,7 +237,7 @@ test("更多设置… does not toggle an already-open settings window shut", asy
   const { bundle, test: api } = loadClientBundle({ document, expose: EXPOSE });
   bundle.apply(makeHost({ invocations }));
 
-  const opened = await api.openNativeSettings("session-explorer", "会话资源管理器");
+  const opened = await api.openNativeSettings("session-navigator", "会话资源管理器");
   assert.equal(opened, true);
   // `settings.open` closes when the modal is already up, so it must not be run.
   assert.equal(invocations.length, 0);
@@ -450,7 +450,7 @@ async function reveal(mode, { detachedAnswer, panelOpen = false, bridge } = {}) 
   const revealed = [];
   api.bridgeActions.reveal = (id) => revealed.push(id);
   await api.revealInExplorer("s1");
-  const paths = fetchImpl.calls.map((call) => call.url.replace("/session-explorer/api", ""));
+  const paths = fetchImpl.calls.map((call) => call.url.replace("/session-navigator/api", ""));
   return { bundle, api, calls: fetchImpl.calls, paths, revealed };
 }
 

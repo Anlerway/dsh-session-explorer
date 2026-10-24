@@ -132,7 +132,7 @@ test("a failing opener falls through to the next one", async () => {
   await openInBrowser(REPO_URL, { spawnImpl, platform: "win32" });
   assert.deepEqual(calls.map((call) => call.command), ["rundll32.exe", "powershell.exe"]);
   // PowerShell gets the quoting it needs for the URL.
-  assert.match(calls[1].args.at(-1), /^Start-Process 'https:\/\/github\.com\/Anlerway\/dsh-session-explorer'$/);
+  assert.match(calls[1].args.at(-1), /^Start-Process 'https:\/\/github\.com\/Anlerway\/dsh-session-navigator'$/);
 });
 
 test("a missing opener binary is not a dead end either", async () => {

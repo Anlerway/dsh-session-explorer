@@ -390,7 +390,7 @@ test("检查更新 asks the host once and reports the newer release", async () =
       current: "1.0.0",
       latest: "1.0.1",
       hasUpdate: true,
-      url: "https://github.com/Anlerway/dsh-session-explorer/releases",
+      url: "https://github.com/Anlerway/dsh-session-navigator/releases",
       name: "1.0.1",
       publishedAt: null,
       notes: "",

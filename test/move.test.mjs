@@ -137,7 +137,7 @@ function apiWith(home, registry) {
 // ── path encoding ───────────────────────────────────────────────────────────
 
 test("projectKey reproduces DSH's directory names", () => {
-  assert.equal(projectKey("C:\\Users\\alice\\Desktop\\session-explorer"), "--C-Users-alice-Desktop-session-explorer--");
+  assert.equal(projectKey("C:\\Users\\alice\\Desktop\\session-navigator"), "--C-Users-alice-Desktop-session-navigator--");
   assert.equal(projectKey("C:\\Users\\alice\\.dsh\\dsh_orb"), "--C-Users-alice-.dsh-dsh_orb--");
   // The observed escaped names: spaces become ~0020, parentheses ~0028/~0029.
   assert.equal(

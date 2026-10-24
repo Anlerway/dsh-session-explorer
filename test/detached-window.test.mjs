@@ -115,7 +115,7 @@ function harness(options = {}) {
   // cannot see DSH's switch), so a harness without it is a 中文 window.
   const window = { React, ReactDOM, fetch: fakeFetch };
   if (options.lang) {
-    window.location = { href: "http://127.0.0.1:1234/session-explorer/api/ui?lang=" + options.lang };
+    window.location = { href: "http://127.0.0.1:1234/session-navigator/api/ui?lang=" + options.lang };
   }
   window.se = {
     async window(action) {
@@ -169,9 +169,9 @@ function fakeModule(options = {}) {
   state.exports = {
     apply(ctx) {
       state.ctx = ctx;
-      if (options.dictionary) ctx.locale.register("session-explorer", options.dictionary);
+      if (options.dictionary) ctx.locale.register("session-navigator", options.dictionary);
       ctx.slots.inject("sidebar.footer.action", () =>
-        ctx.slots.register({ name: "sidebar.footer.action", id: "session-explorer-footer" }, Component),
+        ctx.slots.register({ name: "sidebar.footer.action", id: "session-navigator-footer" }, Component),
       );
     },
     panelStore: store,
@@ -201,17 +201,17 @@ function load(module, ctx) {
 test("the window's page loads one UI, from the Host's own origin", () => {
   const scripts = [...PAGE.matchAll(/<script src="([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(scripts, [
-    "/session-explorer/api/ui/react.js",
-    "/session-explorer/api/ui/react-dom.js",
-    "/session-explorer/api/ui/shim.js",
+    "/session-navigator/api/ui/react.js",
+    "/session-navigator/api/ui/react-dom.js",
+    "/session-navigator/api/ui/shim.js",
     // The panel's own module: the window has no UI of its own any more.
-    "/session-explorer/api/ui/client.js",
+    "/session-navigator/api/ui/client.js",
   ]);
 
-  assert.ok(PAGE.includes('href="/session-explorer/api/ui/window.css"'), "the window stylesheet");
+  assert.ok(PAGE.includes('href="/session-navigator/api/ui/window.css"'), "the window stylesheet");
   // The tab and taskbar show the plugin's own folder mark, not a blank page.
   assert.ok(
-    PAGE.includes('<link rel="icon" type="image/png" href="/session-explorer/api/ui/icon.png">'),
+    PAGE.includes('<link rel="icon" type="image/png" href="/session-navigator/api/ui/icon.png">'),
     "the window favicon",
   );
   assert.ok(!/<script(?![^>]*\bsrc=)/.test(PAGE), "no inline script");
@@ -429,12 +429,12 @@ test("the window never reports its own palette", async () => {
 
   // client.js posts the tokens it reads out of its own shell; in the window that
   // reading is circular and would overwrite the real palette with an empty one.
-  const answer = await ctx.window.fetch("/session-explorer/api/theme", { method: "POST", body: "{}" });
+  const answer = await ctx.window.fetch("/session-navigator/api/theme", { method: "POST", body: "{}" });
   assert.equal((await answer.json()).ok, true, "it still resolves like a real response");
   assert.equal(ctx.calls.filter((call) => call.method === "POST").length, before, "nothing left the window");
 
   // Reading the palette is how the window gets its colours, so that still works.
-  await ctx.window.fetch("/session-explorer/api/theme");
+  await ctx.window.fetch("/session-navigator/api/theme");
   assert.ok(ctx.calls.some((call) => call.url.endsWith("/theme") && call.method === "GET"));
 });
 

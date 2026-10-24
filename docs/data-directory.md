@@ -3,9 +3,14 @@
 插件自己的全部状态都落在一个目录里。这个目录**不是** `~/.dsh` 的子目录，而是它的兄弟：
 
 ```
-C:\Users\<user>\.dsh                    ← DSH 自己的
-C:\Users\<user>\.dsh-session-explorer   ← 本插件的
+C:\Users\<user>\.dsh                     ← DSH 自己的
+C:\Users\<user>\.dsh-session-navigator   ← 本插件的
 ```
+
+插件早期叫 `dsh-session-explorer`，那时用的目录名是 `.dsh-session-explorer`。启动时如果新名字的
+目录还不存在、旧名字的存在，插件会把旧目录**改名**过来（`lib/paths.js` 的 `defaultDataDir()`），
+文件夹、标签、回收站 payload 一起带走；改名失败（比如另一个 DSH 进程还开着它）就继续用旧目录，
+下次启动再试。两个目录同时存在时用新目录，旧目录原样保留。
 
 两个理由（`lib/paths.js:1-26`）：
 

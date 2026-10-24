@@ -13,7 +13,7 @@
 | Host | `lib/index.js` | Cordis，应用启动时加载一次 | DSH 主进程（Node ESM） |
 | Client | `lib/client.js` | `window.__ModuleLoader__.load({ id, factory })`，无构建步骤 | 渲染进程（浏览器环境） |
 
-Host 半体在 DSH 的 web 服务器上注册**一个**前缀路由 `/session-explorer/api`，所有端点都在
+Host 半体在 DSH 的 web 服务器上注册**一个**前缀路由 `/session-navigator/api`，所有端点都在
 它下面（`lib/index.js:248-252`）。Client 半体往 DSH 的 UI 插槽里注册 5 个组件，并把浮窗
 portal 到 `<body>` 上的固定层。
 
@@ -61,7 +61,7 @@ package.json
 `handle(api, req, res)`（`lib/index.js:1189-1248`）：
 
 ```
-routeOf(req.url)                 // lib/http.js:88  剥掉 /session-explorer/api
+routeOf(req.url)                 // lib/http.js:88  剥掉 /session-navigator/api
   ↓ null → 404 bad-request
 compileRoute 匹配表               // lib/index.js:1145  段数相等 + :param 解码
   ↓ 无 → 404 no route for <METHOD> <path>
@@ -206,11 +206,11 @@ if (!isUsableDataDir(dataDir)) throw codedError("reset-refused", "…");        
 
 | 插槽 | id | order | 组件 | 作用 |
 |---|---|---|---|---|
-| `sidebar.footer.action` | `session-explorer-footer` | 40 | `FooterAction` | 侧栏底部入口，开/关浮窗 |
-| `settings.section` | `session-explorer` | 510 | `SettingsSection` | 设置页分组（label 是 thunk，跟随语言）；组序 打开方式 → 列表 → 会话界面 → 浮窗 → 浏览器组件 → 数据目录 → 关于 → 危险操作 |
-| `settings.onboarding` | `session-explorer-opener` | 900 | 匿名 | 只为拿到 `openSection` 后立即 `complete()`，不留 UI |
-| `conversation.session.header.actions` | `session-explorer-header` | 60 | `SessionHeaderActions` | 会话标题栏五个按钮（样式跟随设置 `shell.header.style`） |
-| `sidebar.workspaces.session.menu.item` | `session-explorer-rows` | 500 | `SessionMenuItems` | 会话行 "…" 菜单两条 |
+| `sidebar.footer.action` | `session-navigator-footer` | 40 | `FooterAction` | 侧栏底部入口，开/关浮窗 |
+| `settings.section` | `session-navigator` | 510 | `SettingsSection` | 设置页分组（label 是 thunk，跟随语言）；组序 打开方式 → 列表 → 会话界面 → 浮窗 → 浏览器组件 → 数据目录 → 关于 → 危险操作 |
+| `settings.onboarding` | `session-navigator-opener` | 900 | 匿名 | 只为拿到 `openSection` 后立即 `complete()`，不留 UI |
+| `conversation.session.header.actions` | `session-navigator-header` | 60 | `SessionHeaderActions` | 会话标题栏五个按钮（样式跟随设置 `shell.header.style`） |
+| `sidebar.workspaces.session.menu.item` | `session-navigator-rows` | 500 | `SessionMenuItems` | 会话行 "…" 菜单两条 |
 
 **effect**（随插件卸载自动清理）：
 
