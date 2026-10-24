@@ -187,7 +187,7 @@ function fakeModule(options = {}) {
  */
 function load(module, ctx) {
   ctx.window.__ModuleLoader__.load({
-    id: "dsh-session-explorer",
+    id: "dsh-session-navigator",
     factory: (require) => {
       assert.equal(require("react"), ctx.React, "the factory gets the page's React");
       return module.exports;

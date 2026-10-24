@@ -1,5 +1,5 @@
 /**
- * dsh-session-explorer — 子智能体的绑定规则 (P32).
+ * dsh-session-navigator — 子智能体的绑定规则 (P32).
  *
  * The module answers three questions, and every one of them is a route's guard:
  *

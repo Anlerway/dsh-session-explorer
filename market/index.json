@@ -10,7 +10,7 @@
   },
   "plugins": [
     {
-      "name": "@anlerway/dsh-session-explorer",
+      "name": "dsh-session-navigator",
       "title": {
         "en": "Session Explorer",
         "zh": "会话资源管理器"
@@ -27,13 +27,10 @@
       },
       "versions": [
         {
-          "version": "1.0.0",
-          "publishTimestamp": 1792772267,
+          "version": "1.0.1",
+          "publishTimestamp": 1792823885,
           "source": {
             "type": "npm"
-          },
-          "engines": {
-            "dsh": ">=0.2.1-rc.2 <0.3.0"
           }
         }
       ]

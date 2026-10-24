@@ -1,5 +1,5 @@
 /**
- * dsh-session-explorer — the detached window's stylesheet.
+ * dsh-session-navigator — the detached window's stylesheet.
  *
  * The window runs the panel's own component (lib/client.js), so this file is
  * not a second skin: it is the handful of rules that turn a floating overlay

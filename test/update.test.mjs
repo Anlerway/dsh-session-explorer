@@ -87,7 +87,7 @@ test("a newer release turns hasUpdate on, and is answered from the cache next ti
   assert.equal(first.hasUpdate, true);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "https://api.github.com/repos/Anlerway/dsh-session-explorer/releases/latest");
-  assert.match(calls[0].init.headers["user-agent"], /^dsh-session-explorer\//);
+  assert.match(calls[0].init.headers["user-agent"], /^dsh-session-navigator\//);
 
   // Second press inside the TTL: no second request.
   await checkUpdate({ fetchImpl });

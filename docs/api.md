@@ -141,7 +141,7 @@ curl -X POST -H 'content-type: application/json' -d '{"ids":["s1"]}' \
 
 ```jsonc
 {
-  "hello":       { "plugin": "dsh-session-explorer", "schema": 1 },
+  "hello":       { "plugin": "dsh-session-navigator", "schema": 1 },
   "capabilities":{ /* 见 lib/capabilities.js */ },
   "workspaces":  { "workspaces": [ { id, title, path, sessionIds, createdAt, updatedAt } ] },
   "sessions":    [ /* 合并视图 + home + homeOverride */ ],

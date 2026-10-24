@@ -143,7 +143,7 @@ staging 目录故意放在 `component/` **外面**（`<dataDir>/.component-stagi
 
 | 文件 | 内容 |
 |---|---|
-| `resources/app/package.json` | `{"name": "dsh-session-explorer-helper", "main": "main.cjs"}` |
+| `resources/app/package.json` | `{"name": "dsh-session-navigator-helper", "main": "main.cjs"}` |
 | `resources/app/main.cjs` | `require` 仓库里的 `lib/detached/main.cjs`，**绝对路径** |
 
 Electron 在没有命令行路径时去 `resources/app` 找应用，而且它**优先于** `default_app.asar`——

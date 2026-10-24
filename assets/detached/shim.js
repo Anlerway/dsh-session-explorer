@@ -1,5 +1,5 @@
 /**
- * dsh-session-explorer — the detached window's host shim.
+ * dsh-session-navigator — the detached window's host shim.
  *
  * The window and the panel are one UI. The window loads lib/client.js verbatim
  * and this file pretends to be DSH for as long as it takes that module to
