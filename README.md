@@ -68,7 +68,7 @@ docs/                 开发文档（见下）
 https://anlerway.github.io/dsh-session-navigator/market/index.json
 ```
 
-搜「会话资源管理器 / Session Explorer」→ **安装** → 确认来源是 npm 上的 `dsh-session-navigator` → 重启 DSH。
+搜「会话资源管理器 / Session Navigator」→ **安装** → 确认来源是 npm 上的 `dsh-session-navigator` → 重启 DSH。
 
 > 「发现」依赖实验性组合包**自定义插件市场**：插件页 → 实验性插件旁的「更多」→ 打开开关。
 > 索引随仓库发布（`market/index.json`），需要仓库启用 GitHub Pages；没启用就直接用第 2 步。
@@ -81,7 +81,7 @@ dsh plugin --profile web add dsh-session-navigator   # 桌面版用 --profile de
 
 装完重启 DSH。
 
-刚发布的版本可能被 pnpm 的「最小发布年龄」策略挡在门外，解析到旧版；要立刻装这一次的版本，就把版本号写全：`dsh plugin --profile web add dsh-session-navigator@1.0.2`。
+刚发布的版本可能被 pnpm 的「最小发布年龄」策略挡在门外，解析到旧版；要立刻装这一次的版本，就把版本号写全：`dsh plugin --profile web add dsh-session-navigator@1.0.3`。
 
 ### 3. GitHub 源码
 

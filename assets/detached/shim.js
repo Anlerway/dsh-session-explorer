@@ -76,9 +76,9 @@
   // run: a Chinese window would flash before an English one appeared otherwise.
   if (LANG === "en") {
     document.documentElement.lang = "en";
-    document.title = "Session Explorer";
+    document.title = "Session Navigator";
     const title = document.querySelector(".boot-title");
-    if (title) title.textContent = "Session Explorer";
+    if (title) title.textContent = "Session Navigator";
     note("Starting…");
   }
 

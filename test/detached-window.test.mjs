@@ -447,7 +447,7 @@ test("the window never reports its own palette", async () => {
 /** The two dictionaries the panel registers, shaped like the settings page's. */
 const DICTIONARIES = {
   zh: { langCode: "zh", footerLabel: "会话资源管理器", count: "{n} 个会话" },
-  en: { langCode: "en", footerLabel: "Session Explorer" },
+  en: { langCode: "en", footerLabel: "Session Navigator" },
 };
 
 test("the window draws in the language the Host asked for", () => {
@@ -458,7 +458,7 @@ test("the window draws in the language the Host asked for", () => {
   assert.equal(module.ctx.locale.language(), "en", "the platform reports English");
   assert.equal(module.ctx.locale.current(), "en");
   assert.equal(t("langCode"), "en", "which is how the panel itself finds out");
-  assert.equal(t("footerLabel"), "Session Explorer");
+  assert.equal(t("footerLabel"), "Session Navigator");
 
   // A key the English dictionary does not carry falls back to Chinese: a label
   // in the wrong language beats a raw key on a button.
@@ -483,9 +483,9 @@ test("an English window rewrites the page's own chrome", () => {
 
   // index.html is authored in Chinese and parsed before any script runs, so the
   // shim is the only thing that can change what the first frame says.
-  assert.equal(ctx.document.title, "Session Explorer");
+  assert.equal(ctx.document.title, "Session Navigator");
   assert.equal(ctx.document.documentElement.lang, "en");
-  assert.equal(ctx.bootTitle.textContent, "Session Explorer");
+  assert.equal(ctx.bootTitle.textContent, "Session Navigator");
   assert.equal(ctx.bootSub.textContent, "Starting…");
 });
 

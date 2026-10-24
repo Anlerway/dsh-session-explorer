@@ -183,7 +183,7 @@ test("the window's static page is rewritten, not translated twice", () => {
   // runs; the shim rewrites the title and the boot line for an English window.
   assert.match(page, /<title>[^<]+<\/title>/);
   const shim = read("assets/detached/shim.js");
-  assert.match(shim, /document\.title = "Session Explorer"/);
+  assert.match(shim, /document\.title = "Session Navigator"/);
   assert.match(shim, /querySelector\("\.boot-title"\)/);
   assert.match(shim, /note\("Starting…"\)|note\(L\(/);
 });

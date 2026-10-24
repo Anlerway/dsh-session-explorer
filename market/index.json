@@ -12,7 +12,7 @@
     {
       "name": "dsh-session-navigator",
       "title": {
-        "en": "Session Explorer",
+        "en": "Session Navigator",
         "zh": "会话资源管理器"
       },
       "description": {
@@ -27,8 +27,8 @@
       },
       "versions": [
         {
-          "version": "1.0.1",
-          "publishTimestamp": 1792823885,
+          "version": "1.0.3",
+          "publishTimestamp": 1792824762,
           "source": {
             "type": "npm"
           }
