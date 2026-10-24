@@ -1,171 +1,192 @@
-# dsh-session-navigator（会话资源管理器）
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Anlerway/dsh-session-navigator/main/docs/assets/readme/header.png" alt="会话资源管理器 · dsh-session-navigator" width="720">
+</p>
 
-给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的资源管理器式会话浏览器：
-虚拟文件夹、标签、备注、回收站、多 workspace 浏览——**从不改动 `~/.dsh` 的物理布局**。
+<p align="center">
+  <strong>中文</strong> | <a href="README.en.md">English</a>
+</p>
 
-> 状态：两个面都已功能完整。会话可重命名、归档、置顶、分叉、移动、打标签、写备注、筛选、
-> 删除到回收站、导出；文件夹可嵌套可拖拽；删除会把 payload 移进真正的回收站，能还原也能清空；
-> 跨 workspace 的剪切/复制/粘贴会换掉 artifact 的归属并同步 registry 记账。
-> workspace、文件夹、会话共用一条置顶带；收藏和待办装的是快捷方式而不是副本；
-> 面板有标签页、可调三栏、行内重命名和命令栏。设置页结尾两组是「关于」（版本号、检查更新、
-> 清理缓存、Star 与反馈入口）和「危险操作」：清除数据——不可逆，要照字打一遍 DELETE。
-> 面板、独立窗口和设置页都跟随 DSH 的语言开关（中文 / English），切换即刻生效。
+<p align="center">
+  <a href="https://www.npmjs.com/package/dsh-session-navigator"><img alt="npm" src="https://img.shields.io/npm/v/dsh-session-navigator?style=flat-square&color=6c5ce7"></a>
+  <a href="https://www.npmjs.com/package/dsh-session-navigator"><img alt="npm downloads" src="https://img.shields.io/npm/dm/dsh-session-navigator?style=flat-square&color=4b6fff"></a>
+  <a href="https://github.com/Anlerway/dsh-session-navigator/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Anlerway/dsh-session-navigator?style=flat-square&color=eab308"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/npm/l/dsh-session-navigator?style=flat-square&color=22c55e"></a>
+</p>
 
-## 两个面，一份 UI
+# 会话资源管理器
 
-| 面 | 是什么 |
-|---|---|
-| **浮窗** | 从 DSH 侧栏打开的面板，`lib/client.js`，渲染进 DSH 页面的浮层 |
-| **独立窗口** | 同一份 UI 在独立的无边框 OS 窗口里：页面**原样加载** `lib/client.js`，所以只有一份实现。需要浏览器组件（可选，150 MB，显式下载） |
+像 Windows 资源管理器那样管理 DSH 的会话，让会话管理像文件管理那样简单。
 
-导出会话走 `GET /export`，输出 Markdown 或 JSONL。只有文本：附件和二进制工具输出会被描述，
-不会被内联。
+不改变会话文件的物理位置，在 `~/.dsh-session-navigator/` 记一份索引——记录文件夹、名称、标签、备注。
 
-## 结构
+**适用**：多会话用户：得心应手的对您的会话和工作区分类，移动，删除，备注，重命名，也可以待办，收藏，置顶您的会话，让会话管理像文件管理那样简单。
 
-零运行时依赖。一个 DSH 插件是 bundles 里的一行，两半：
+- 目录树按工作区自动生成，自己可以新建文件夹无限嵌套，会话工作区支持拖进拖出
+- 标题、标签、备注随心所欲的自定义
+- 搜索支持标题、备注、标签搜索
+- 收藏、待办、置顶、归档；配备回收站，删除后有后悔药
+- 跨工作区剪切粘贴；会话内容可自由导出 Markdown 或 JSONL，供其他会话使用
 
-| 半 | 入口 | 谁加载 |
-|---|---|---|
-| Host | `lib/index.js` | Cordis，应用启动时加载一次 |
-| Client | `lib/client.js` | 渲染进程里的 `window.__ModuleLoader__.load`，无构建步骤 |
+## 界面介绍
 
-Host 在 DSH 的 web 服务器上注册一个 `/session-navigator/api` 前缀路由；Client 注册
-`sidebar.footer.action` 等 5 个槽位，并把面板 portal 到 `<body>` 上的固定层。
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Anlerway/dsh-session-navigator/main/assets/screenshots/float.png" width="880" alt="浮窗模式">
+</p>
 
-```
-lib/
-  index.js            路由表（62 条）、分发、错误映射
-  client.js           整个面板与设置页（单文件、无构建）
-  http.js             信封与请求体解析
-  constants.js        API 前缀、插件 id、固定节点 id
-  capabilities.js     对宿主服务的防御式探测
-  paths.js            数据目录解析（env → settings → .location）
-  domain/             纯规则：tree-rules / tree / folders / shortcuts / sessions /
-                      annotations / settings / trash / export / session-state
-  sources/            读管道：heads（zstd 扫描）、projcache、reader、artifact、workspaces
-  store/              sidecar（原子写 + revision）、documents（四份文档）
-  host/               actions、trash、move、datadir、bridge、theme、
-                      update（更新检查）、open-link（链接白名单）、maintenance（缓存清理）、
-                      reset（清除数据，唯一不可逆的操作）
-  component/          浏览器组件：layout、state、downloader、install、manager
-  detached/           Electron helper：launcher、main.cjs、preload.cjs
-assets/detached/      独立窗口的页面：index.html、window.css、shim.js（不自带 UI）
-assets/vendor/        自带 React 18.3.1 UMD 构建
-test/                 34 个测试文件 + render-smoke
-docs/                 开发文档（见下）
-```
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Anlerway/dsh-session-navigator/main/assets/screenshots/filter.png" width="600" alt="筛选">
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Anlerway/dsh-session-navigator/main/assets/screenshots/settings.png" width="560" alt="设置界面">
+</p>
+
+浮窗模式太小，不方便，不过瘾？别急，我们还有独立弹窗——真正像资源管理器那样
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Anlerway/dsh-session-navigator/main/assets/screenshots/window.png" width="900" alt="独立窗口全屏">
+</p>
+
+当然，也可以进行分屏/多屏协作
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Anlerway/dsh-session-navigator/main/assets/screenshots/split.png" width="900" alt="DSH 聊天在左，会话资源管理器停靠在右，两边各自独立">
+</p>
+
+<p align="center"><em>分屏模式</em></p>
 
 ## 安装
 
-要求：Node `^22.15.0 || >=24.0.0`。不限制 DSH 版本——插件按 0.2.1 的宿主接口开发和自测，更新的 DSH 一般也能直接用。四种方式任选，**从上到下越来越手动**。
+### 快速开始（推荐）
 
-### 1. DSH 内置插件管理器（推荐）
+DSH 的插件页 → 「添加插件」→ 输入包名 `dsh-session-navigator` → 安装 → 重启 DSH。
 
-插件页 →「已安装」旁的**「发现」**标签 → **添加索引源**，填：
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Anlerway/dsh-session-navigator/main/assets/screenshots/install.png" width="560" alt="DSH 的「添加插件」对话框，输入 dsh-session-navigator 后点安装">
+</p>
 
-```text
-https://anlerway.github.io/dsh-session-navigator/market/index.json
+### 命令行安装
+
+Web:
+
+```powershell
+dsh plugin --profile web add dsh-session-navigator
 ```
 
-搜「会话资源管理器 / Session Navigator」→ **安装** → 确认来源是 npm 上的 `dsh-session-navigator` → 重启 DSH。
+Desktop:
 
-> 「发现」依赖实验性组合包**自定义插件市场**：插件页 → 实验性插件旁的「更多」→ 打开开关。
-> 索引随仓库发布（`market/index.json`），需要仓库启用 GitHub Pages；没启用就直接用第 2 步。
-
-### 2. npm（一条命令）
-
-```bash
-dsh plugin --profile web add dsh-session-navigator   # 桌面版用 --profile desktop
+```powershell
+dsh plugin --profile desktop add dsh-session-navigator
 ```
 
-装完重启 DSH。
+### 从 Github 源码安装
 
-刚发布的版本可能被 pnpm 的「最小发布年龄」策略挡在门外，解析到旧版；要立刻装这一次的版本，就把版本号写全：`dsh plugin --profile web add dsh-session-navigator@1.0.3`。
+Web
 
-### 3. GitHub 源码
-
-```bash
+```powershell
 dsh plugin --profile web add github:Anlerway/dsh-session-navigator
 ```
 
-本插件没有构建步骤（`lib/` 直接随仓库走），也不强装任何原生依赖——安装时不会卡在 pnpm ≥10 的「拒绝执行安装脚本」上。`koffi` 是**可选**的 peer：装了就「在文件夹中显示」走原生 `SHOpenFolderAndSelectItems`（~15ms），没装就回退到 PowerShell，只慢一点，不缺功能。
+Desktop
 
-想要原生那条路，先授权再补装：
-
-```yaml
-# ~/.dsh/profiles/<profile>/pnpm-workspace.yaml
-allowBuilds:
-  "koffi@3.3.3": true
+```powershell
+dsh plugin --profile desktop add github:Anlerway/dsh-session-navigator
 ```
 
-```bash
-dsh plugin --profile web add koffi
+### 从本地安装
+
+下载资源：[最新版本安装包](https://github.com/Anlerway/dsh-session-navigator/releases/latest)
+
+```powershell
+dsh plugin --profile web add '<实际路径>'
 ```
 
-（等于授权安装期在本机执行代码，只对信得过的包这么做。）
+### 更新
 
-### 4. 本地 checkout（开发用）
+Web
 
-```bash
-# 1. 让包在 desktop profile 里可解析
-cd ~/.dsh/profiles/desktop
-#    package.json -> dependencies: { "dsh-session-navigator": "link:<绝对路径>" }
-#    package.json -> dsh.profile.bundles: [... "dsh-session-navigator" ...]
-#    然后建好 node_modules 里的条目（Windows 上是 junction）
-
-# 2. 重启 DSH 应用
+```powershell
+dsh plugin --profile web add dsh-session-navigator@latest
 ```
 
-**Host 侧**改动（`lib/index.js`、路由、store）必须完整重启应用才生效：Cordis 只加载一次，
-desktop profile 是 Electron 应用组装出来的，`dsh profile` 也重建不了它。
-**Client 侧**改动（`lib/client.js`）由 client-plugin HMR 接收器热更新，或刷新页面。
+Desktop
 
-## 数据
-
-全部侧车状态在 `~/.dsh-session-navigator/`——`~/.dsh` 的**兄弟**，不是子目录，所以卸载插件
-就是删一个目录。定位顺序是 `DSH_SE_DATA_DIR` → 默认位置 `settings.v1.json` 里的
-`dataDir.current` → `.location` 指针，详见 [docs/data-directory.md](docs/data-directory.md)。
-
-## 功能要点
-
-| 能力 | 说明 |
-|---|---|
-| 六个固定入口 | 根目录 / 所有会话 / 未分组 / 回收站 / 待办 / 收藏，每个都有实时计数 |
-| 虚拟放置 | 会话可"放进"任意 workspace 而不搬字节（DSH 从 header 的 `cwd` 推导归属，改它就要搬 payload） |
-| 快捷方式 | 引用，永不移动目标；目标没了引用才消失 |
-| 子智能体绑定 | 子智能体跟随父会话：不能单独删除/剪切/复制/收藏/待办/归档/重命名/分叉，父会话删除时整条委派链一起走；fork 不算子智能体 |
-| 回收站 | 真移动会话目录，可还原、可清空，崩溃安全（索引先写、对账后收尾） |
-| 导出 | Markdown / JSONL，来自详情面板或行菜单 |
-| 搜索 | 只匹配标题、备注、标签——插件自己拥有的东西；不读会话日志 |
-| 会话状态 | 运行中（DSH 里活着）/ 已中断（日志停在一轮中间）/ 空闲，三者互斥；已中断的会话可以删除 |
-| 空会话 | 从未开始过一轮对话的会话被标为空白，默认从列表里过滤掉（设置里可关） |
-| 定位 | 会话详情面板与行菜单都有「复制文件路径」：由 Host 找出日志路径（含回收站里的），写进剪贴板；不弹窗口，跨机器也能用 |
-| 主题 | 不硬编码颜色，全部用 `--dsw-alias-*`；独立窗口由面板把 14 个 token 报给 Host 再取用 |
-| 设置 | 浮窗/独立弹窗、尺寸、遮罩、会话界面按钮样式（自动/仅图标）、自动折叠、显示已归档、折叠子智能体（开关）、过滤空会话（开关）、日期格式（详细日期/距今时间）、大小单位（自动转换/固定 KB）、数据目录迁移、组件管理、关于（版本、检查更新、清理缓存、Star、反馈）、危险操作（清除数据，不可逆，需键入 DELETE） |
-
-## 开发文档
-
-| 文档 | 讲什么 |
-|---|---|
-| [docs/README.md](docs/README.md) | 文档索引 + 三条最容易被违反的约定 |
-| [docs/architecture.md](docs/architecture.md) | 两半结构、一次请求怎么走完、读管道与缓存 |
-| [docs/api.md](docs/api.md) | 62 条路由、信封、错误码表、乐观锁 |
-| [docs/data-directory.md](docs/data-directory.md) | 数据目录、四份侧车、回收站、迁移 |
-| [docs/tree-and-placement.md](docs/tree-and-placement.md) | 节点种类、R1–R5、计数、快捷方式 |
-| [docs/bridge-and-theme.md](docs/bridge-and-theme.md) | 命令总线、SSE、主题同步 |
-| [docs/component.md](docs/component.md) | 浏览器组件的状态机与安装流程 |
-| [docs/testing.md](docs/testing.md) | 三十四个测试文件各钉住什么 |
-
-## 测试
-
-```bash
-npm test              # node --test test/*.test.mjs
-npm run test:render   # 面板对着 stub React 真实渲染一遍
+```powershell
+dsh plugin --profile desktop add dsh-session-navigator@latest
 ```
 
-测试跑在 `mkdtemp` 出来的临时目录和手写的 `paths` 对象上，从不碰 `~/.dsh` 和真实侧车。
+### 卸载
 
-## 许可
+Web
 
-MIT。
+```powershell
+dsh plugin --profile web remove dsh-session-navigator
+```
+
+Desktop
+
+```powershell
+dsh plugin --profile desktop remove dsh-session-navigator
+```
+
+插件自己的数据不会跟着删，如果要清理干净，需要删掉 `~/.dsh-session-navigator/`
+
+需要 Node.js `^22.15.0 || >=24.0.0`。
+
+## 功能
+
+| 目录 | 操作 |
+| --- | --- |
+| 给会话分组 | 工作区里新建文件夹，拖到文件夹内 |
+| 改名字 | 点击编辑按钮或在右侧详情页编辑 |
+| 加标签 / 写备注 | 右侧详情栏；标签可以预制 |
+| 搜索查找 | 搜索框搜标题、备注、标签；「筛选」按收藏、归档、待办、标签 |
+| 收藏 / 待办 | 选中后进行收藏，取消收藏操作 |
+| 置顶 | 文件夹和工作区可以置顶到列表顶上，同步到DSH 自己置顶的会话 |
+| 归档 | 默认在列表底部；设置里可以关掉显示 |
+| 删除 | 整个会话目录移进回收站，可还原、可清空 |
+| 换工作区 | 跨工作区剪切 / 粘贴，标签备注跟着走 |
+| 会话导出 | 详情栏和右键菜单，导出为Markdown 或 JSONL |
+
+## 配置
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Anlerway/dsh-session-navigator/main/assets/screenshots/settings.png" width="560" alt="设置界面">
+</p>
+
+| 设置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| 打开方式 | 浮窗 | 浮窗 / 独立弹窗。独立弹窗需要额外下载浏览器组件，仅支持 Windows |
+| 会话标题栏按钮样式 | 自动 | 也能固定只显示图标 |
+| 自动折叠 | 关 | 进入一个文件夹后，收起它的同级目录 |
+| 显示已归档 | 开 | 关掉后归档会话不再列在底部 |
+| 过滤空会话 | 开 | 没开始过任何一轮的会话不列出来 |
+| 折叠子智能体 | 开 | 可点箭头展开 |
+| 日期格式 | 详细日期 | 或距今时间 |
+| 大小单位 | 自动转换 | 在 B / KB / MB / GB 切换；也能固定 KB |
+| 数据目录 | `~/.dsh-session-navigator` | 迁移用，可在设置里改 |
+
+## 文档
+
+- [架构](docs/architecture.md) · [HTTP 接口](docs/api.md) · [数据目录](docs/data-directory.md)
+- [树的规则](docs/tree-and-placement.md) · [独立窗口组件](docs/component.md) · [主题与桥接](docs/bridge-and-theme.md)
+- [测试](docs/testing.md) · [文档索引](docs/README.md)
+
+## 开发与测试
+
+零运行时依赖，`lib/` 直接跟着仓库走，没有构建步骤。
+
+```powershell
+node --test "test/*.test.mjs"   # 380 个用例
+node test/render-smoke.mjs      # 渲染冒烟
+```
+
+CI 只跑 Windows（`windows-latest`，Node 22 和 24），因为发布目标是 DSH 桌面版，独立窗口的资产名是 win32 的。macOS 和 Linux 没测。
+
+## issue
+
+如果您需要macOS和Linux下的适配，或遇到一些使用bug，或你需要新增的功能，请在issue提出
+
+## 许可证
+
+MIT，见 [LICENSE](LICENSE)。

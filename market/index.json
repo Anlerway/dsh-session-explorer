@@ -16,8 +16,8 @@
         "zh": "会话资源管理器"
       },
       "description": {
-        "en": "Resource-manager style session browser for DSH: virtual folders, tags, notes, trash and multi-workspace browsing.",
-        "zh": "资源管理器式的会话浏览器：虚拟文件夹、标签、备注、回收站、多 workspace 浏览，从不改动 ~/.dsh 的物理布局。"
+        "en": "Manage DSH sessions the way Windows Explorer manages files: folder tree, tags, notes, recycle bin. Session files never move.",
+        "zh": "像 Windows 资源管理器那样管理 DSH 的会话：目录树、标签、备注、回收站，不改动 ~/.dsh 的文件布局。"
       },
       "icon": "icons/icon.png",
       "author": "Anlerway",
@@ -27,8 +27,8 @@
       },
       "versions": [
         {
-          "version": "1.0.3",
-          "publishTimestamp": 1792824762,
+          "version": "1.0.4",
+          "publishTimestamp": 1792825800,
           "source": {
             "type": "npm"
           }
